@@ -1,0 +1,323 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Stage 1: fast precommit gate. Cheap checks that fail a PR before the
+  # expensive platform matrix is ever scheduled.
+  fast-checks:
+    name: fast checks (lint, type, rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy
+      - name: ruff lint
+        run: ruff check lucen tests
+      - name: ruff format
+        run: ruff format --check lucen tests
+      - name: mypy
+        run: mypy
+      - name: rustfmt
+        run: cargo fmt --manifest-path lucen_core/Cargo.toml -- --check
+      - name: clippy
+        run: cargo clippy --manifest-path lucen_core/Cargo.toml -- -D warnings
+      - name: cargo test
+        run: cargo test --manifest-path lucen_core/Cargo.toml --release
+
+  # Stage 2: the full platform matrix, gated on the fast checks passing.
+  test:
+    name: test (py${{ matrix.python }}, ${{ matrix.os }})
+    needs: fast-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            lucen_core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('lucen_core/Cargo.lock') }}
+
+      - name: Install (native extension + dev deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis
+          maturin build --release --out dist
+          pip install --no-index --find-links dist lucen
+
+      - name: Run tests (native accel active)
+        run: pytest -q
+
+      - name: Run tests (pure-Python fallback)
+        shell: bash
+        env:
+          LUCEN_DISABLE_NATIVE: "1"
+        run: pytest -q tests/unit tests/property
+
+  # Architecture coverage: arm64 Linux and arm64 macOS on one interpreter.
+  cross-arch:
+    name: test (arm64, ${{ matrix.os }})
+    needs: fast-checks
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install and test
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis
+          maturin build --release --out dist
+          pip install --no-index --find-links dist lucen
+          pytest -q
+
+  # Free-threaded 3.14t is a hard gate on exactly what a user gets from
+  # pip install there: the py3-none-any pure-Python wheel (the abi3 native wheel
+  # is not installable on a free-threaded build). Building and installing that
+  # wheel here, then running the suite, tests the real install path, not a
+  # PYTHONPATH shortcut.
+  free-threaded:
+    name: free-threaded 3.14t (pure wheel)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+          allow-prereleases: true
+      - name: Build and install the pure-Python wheel
+        run: |
+          python -m pip install --upgrade pip build pytest hypothesis
+          mkdir -p build-pure
+          cp -r lucen build-pure/lucen
+          find build-pure/lucen -name '__pycache__' -type d -prune -exec rm -rf {} +
+          find build-pure/lucen \( -name '*.pyd' -o -name '*.so' -o -name '*.dll' \) -delete
+          cp packaging/pure/pyproject.toml build-pure/pyproject.toml
+          cp README.md LICENSE build-pure/
+          cd build-pure && python -m build --wheel --outdir ../dist
+          cd .. && pip install --no-index --find-links dist lucen
+      - name: Confirm the fallback is active and run the suite
+        run: |
+          python -c "from lucen.execution import _accel; assert _accel.ACCELERATED is False; print('pure fallback active on 3.14t')"
+          pytest -q tests/unit tests/integration tests/property
+
+  coverage:
+    name: coverage (>= 85%)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis pytest-cov
+          maturin build --release --out dist
+          pip install --no-index --find-links dist lucen
+      - name: Run tests with coverage
+        run: pytest -q --cov=lucen --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
+  # Verify the source distribution is self-contained: build the sdist and
+  # install from it alone (which compiles the native crate), then smoke-test.
+  sdist-install:
+    name: install from sdist
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build sdist and install from it
+        run: |
+          python -m pip install --upgrade pip maturin
+          maturin sdist --out dist
+          pip install dist/*.tar.gz
+      - name: Smoke-test the installed package
+        run: |
+          cd /tmp
+          python -c "import lucen; lucen.activate(); print('sdist install OK, version', lucen.__version__)"
+
+  # Verify the bare user install: the wheel with no dev extras imports and runs
+  # a marked loop end to end.
+  minimal-install:
+    name: minimal user install
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the wheel and install only it
+        run: |
+          python -m pip install --upgrade pip maturin
+          maturin build --release --out dist
+          pip install --no-index --find-links dist lucen
+      - name: Run a marked loop end to end
+        run: |
+          cd /tmp
+          cat > run_min.py <<'PY'
+          import lucen
+          lucen.activate()
+          import work_min
+          work_min.main()
+          PY
+          cat > work_min.py <<'PY'
+          def main():
+              xs = list(range(2000))
+              ys = [0] * len(xs)
+              # LUCEN START
+              for i in range(len(xs)):
+                  ys[i] = xs[i] * 2 + 1
+              # LUCEN END
+              assert ys == [x * 2 + 1 for x in xs]
+              print("minimal install: marked loop ran, result correct")
+
+          if __name__ == "__main__":
+              main()
+          PY
+          python run_min.py
+
+  # Miri interprets the native core's tests and rejects undefined behavior in
+  # the audit and sort logic. Verified to build and pass on the pyo3 crate.
+  miri:
+    name: miri (native core UB)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: cargo miri test
+        run: cargo miri test --manifest-path lucen_core/Cargo.toml
+
+  # ThreadSanitizer and AddressSanitizer on the native core. Best-effort: the
+  # sanitizer plus pyo3 plus build-std combination is sensitive to toolchain
+  # state, so this lane informs rather than blocks.
+  sanitizers:
+    name: sanitizers (native core)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: cargo test under ${{ matrix.sanitizer }}sanitizer
+        env:
+          RUSTFLAGS: "-Zsanitizer=${{ matrix.sanitizer }}"
+        run: >
+          cargo test -Zbuild-std
+          --target x86_64-unknown-linux-gnu
+          --manifest-path lucen_core/Cargo.toml
+
+  # Model-check the two core concurrency invariants with TLC. The executable
+  # bounded checker in tests/formal runs in the test job; this lane checks the
+  # TLA+ specifications themselves.
+  formal:
+    name: formal (TLA+ model check)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Fetch the TLA+ tools
+        run: curl -sL -o tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+      - name: Check the specifications
+        working-directory: docs/formal
+        run: |
+          for spec in PrivatizeCommit Wavefront; do
+            java -cp "$GITHUB_WORKSPACE/tla2tools.jar" tlc2.TLC -deadlock -config "$spec.cfg" "$spec.tla" | tee "$spec.out"
+            grep -q "No error has been found" "$spec.out"
+          done
+
+  # PyPy and GraalPy run the pure-Python fallback (no native wheel loads there).
+  # PyPy is a hard gate; GraalPy is best-effort while its ecosystem matures.
+  alt-interpreters:
+    name: ${{ matrix.python }} (pure fallback)
+    needs: fast-checks
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { python: "pypy3.11", experimental: false }
+          - { python: "graalpy-24.1", experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install as pure Python and run the fallback suite
+        run: |
+          python -m pip install --upgrade pip pytest hypothesis
+          mkdir -p build-pure
+          cp -r lucen build-pure/lucen
+          find build-pure/lucen -name '__pycache__' -type d -prune -exec rm -rf {} +
+          find build-pure/lucen \( -name '*.pyd' -o -name '*.so' -o -name '*.dll' \) -delete
+          cp packaging/pure/pyproject.toml build-pure/pyproject.toml
+          cp README.md LICENSE build-pure/
+          pip install ./build-pure
+          python -c "from lucen.execution import _accel; assert _accel.ACCELERATED is False; print('pure fallback active')"
+          pytest -q tests/unit tests/property

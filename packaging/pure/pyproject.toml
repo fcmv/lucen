@@ -1,0 +1,34 @@
+# py3-none-any wheel for platforms where the native abi3 wheel is not installable.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lucen"
+dynamic = ["version"]
+description = "Comment-pragma parallelization for ordinary Python code - never an incorrect result."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Lucen contributors" }]
+dependencies = ["tomli; python_version < '3.11'"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: System :: Distributed Computing",
+]
+
+[project.scripts]
+lucen = "lucen.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "lucen.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["lucen*"]
+
+[tool.setuptools.package-data]
+lucen = ["py.typed"]
