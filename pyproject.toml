@@ -1,0 +1,90 @@
+# Mixed Python/Rust project. The pure-Python package `lucen/` is the whole
+# implementation; the Rust crate `lucen_core/` builds an optional native
+# accelerator imported as `lucen._core`. Lucen runs correctly with the
+# extension absent (spec 1.1) - `lucen._accel` falls back to pure Python.
+
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "lucen"
+version = "1.0.0"
+description = "Comment-pragma parallelization for ordinary Python code - never an incorrect result."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Lucen contributors" }]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: System :: Distributed Computing",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "pytest-cov>=5", "mypy>=1.8", "ruff>=0.6"]
+docs = ["mkdocs-material>=9", "mkdocstrings[python]>=0.25"]
+
+[project.scripts]
+lucen = "lucen.cli:main"
+
+[tool.maturin]
+manifest-path = "lucen_core/Cargo.toml"
+module-name = "lucen._core"
+python-source = "."
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["perf: performance-regression checks (speedup floors and routing invariants)"]
+
+[tool.coverage.run]
+source = ["lucen"]
+branch = true
+omit = ["lucen/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+fail_under = 85
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["tests/benchmarks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "SIM"]
+ignore = ["E501", "B008", "SIM105"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011", "SIM", "E731"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["lucen"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# The AST-transformation and domain-union execution core is verified by the
+# differential, property, and parity suites, not the type gate.
+[[tool.mypy.overrides]]
+module = [
+    "lucen._core",
+    "lucen.codegen.generator",
+    "lucen.import_hook",
+    "lucen.analysis.rewriter",
+    "lucen.analysis.scanner",
+    "lucen.analysis.trust",
+    "lucen.execution.dispatch",
+    "lucen.execution.planning",
+]
+ignore_errors = true

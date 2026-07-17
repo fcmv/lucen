@@ -1,0 +1,26 @@
+{
+  "generated": "2026-07-10T01:23:24",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.0",
+  "free_threaded": false,
+  "cpu_count": 12,
+  "timer_floor_ns": 0,
+  "thread": {
+    "single_roundtrip_ns": 20000,
+    "batch32_per_chunk_ns": 6170
+  },
+  "process": {
+    "spawn_ms_per_worker": 82.0125,
+    "warm_roundtrip_us": 157.25,
+    "roundtrip_10k_int_payload_us": 624.45
+  },
+  "pickle": {
+    "p4_mb_s": 3354.6,
+    "p5_mb_s": 3463.7,
+    "p5_oob_mb_s": 4444444.4
+  },
+  "commit": {
+    "list_slice_assign_melem_s": 154.7,
+    "dict_bulk_update_melem_s": 43.7
+  }
+}

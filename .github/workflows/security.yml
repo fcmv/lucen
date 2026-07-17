@@ -1,0 +1,36 @@
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit (Rust advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit the native crate's locked dependencies
+        run: cargo audit --file lucen_core/Cargo.lock
+
+  pip-audit:
+    name: pip-audit (Python advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit the resolved dependency set
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: "."
