@@ -288,15 +288,24 @@ def _fake_main(monkeypatch, tmp_path, source):
 
 
 def test_unguarded_entry_script_falls_back_sequential(monkeypatch, tmp_path):
+    from lucen.execution import process_backend
+
     _fake_main(monkeypatch, tmp_path, "import math\nprint('top-level work')\nrun_everything()\n")
     src = block(["ys[i] = xs[i] + 1"], "for i in range(len(xs)):")
     env = {"xs": list(range(300)), "ys": [0] * 300}
     p, _, spec = run(src, env)
     assert p["ys"] == golden(src, env)["ys"]
-    assert any(
-        r.error == "PreflightCheckError" and "__main__" in r.message for r in get_fallback_report()
-    )
-    assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
+    # The unguarded-__main__ refusal only applies under the spawn start method,
+    # where every worker re-imports the entry module. Under fork and forkserver
+    # the script is not re-executed, so the block runs in parallel with no
+    # refusal; gate the spawn-only expectation on the platform's actual method.
+    safe, _ = process_backend._spawn_entry_safe()
+    if not safe:
+        assert any(
+            r.error == "PreflightCheckError" and "__main__" in r.message
+            for r in get_fallback_report()
+        )
+        assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
 
 
 def test_guarded_entry_script_spawns(monkeypatch, tmp_path):

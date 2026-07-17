@@ -79,7 +79,7 @@ jobs:
           pip install --no-index --find-links dist lucen
 
       - name: Run tests (native accel active)
-        run: pytest -q
+        run: pytest -q -m "not perf"
 
       - name: Run tests (pure-Python fallback)
         shell: bash
@@ -108,7 +108,7 @@ jobs:
           pip install maturin pytest hypothesis
           maturin build --release --out dist
           pip install --no-index --find-links dist lucen
-          pytest -q
+          pytest -q -m "not perf"
 
   # Free-threaded 3.14t is a hard gate on exactly what a user gets from
   # pip install there: the py3-none-any pure-Python wheel (the abi3 native wheel
@@ -139,7 +139,7 @@ jobs:
       - name: Confirm the fallback is active and run the suite
         run: |
           python -c "from lucen.execution import _accel; assert _accel.ACCELERATED is False; print('pure fallback active on 3.14t')"
-          pytest -q tests/unit tests/integration tests/property
+          pytest -q -m "not perf" tests/unit tests/integration tests/property
 
   coverage:
     name: coverage (>= 85%)
@@ -155,10 +155,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install maturin pytest hypothesis pytest-cov
-          maturin build --release --out dist
-          pip install --no-index --find-links dist lucen
+          # Editable install so the tests and --cov=lucen resolve to the same
+          # source tree; a built-and-installed wheel would leave coverage
+          # instrumenting ./lucen while the tests import site-packages (0%).
+          pip install -e .
       - name: Run tests with coverage
-        run: pytest -q --cov=lucen --cov-report=term-missing --cov-report=xml
+        run: pytest -q -m "not perf" --cov=lucen --cov-report=term-missing --cov-report=xml
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
@@ -311,7 +313,17 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install as pure Python and run the fallback suite
         run: |
-          python -m pip install --upgrade pip pytest hypothesis
+          python -m pip install --upgrade pip pytest
+          # The property suite needs Hypothesis; the unit suite does not. Some
+          # emerging interpreters have no Hypothesis wheel and its sdist needs a
+          # newer toolchain than the runner ships, so fall back to the
+          # hypothesis-free unit suite instead of failing the whole job.
+          if python -m pip install hypothesis; then
+            SUITE="tests/unit tests/property"
+          else
+            echo "Hypothesis unavailable on ${{ matrix.python }}; running the unit suite only"
+            SUITE="tests/unit"
+          fi
           mkdir -p build-pure
           cp -r lucen build-pure/lucen
           find build-pure/lucen -name '__pycache__' -type d -prune -exec rm -rf {} +
@@ -320,4 +332,4 @@ jobs:
           cp README.md LICENSE build-pure/
           pip install ./build-pure
           python -c "from lucen.execution import _accel; assert _accel.ACCELERATED is False; print('pure fallback active')"
-          pytest -q tests/unit tests/property
+          pytest -q $SUITE
