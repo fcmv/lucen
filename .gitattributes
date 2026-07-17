@@ -1,0 +1,9 @@
+# Normalize line endings so the mixed Python/Rust tree is consistent across OSes.
+* text=auto eol=lf
+*.pyd binary
+*.so binary
+*.whl binary
+
+# Keep GitHub's language stats focused on the real sources.
+docs/** linguist-documentation
+tests/** linguist-vendored=false

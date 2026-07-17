@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue (private)
+    url: https://github.com/fcmv/lucen/security/advisories/new
+    about: >
+      Report a suspected vulnerability privately, especially a silent wrong
+      result reachable from ordinary code. Do not file security issues in public.
+      See SECURITY.md.
+  - name: Question or usage help
+    url: https://github.com/fcmv/lucen/discussions
+    about: >
+      For "how do I..." and "why does this block run sequentially?" questions,
+      start a discussion. Try `lucen explain yourfile.py` first, and see
+      SUPPORT.md.

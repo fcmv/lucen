@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+
+# Rust (lucen_core, from Phase 9)
+target/
+
+# Lucen artifacts
+.lucen_cache/
+.lucen_baseline.json
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+
+# TLA+ / TLC generated artifacts
+docs/formal/states/
+docs/formal/*_TTrace_*
+docs/formal/*.out
+tla2tools.jar
+
+# mkdocs build output
+site/
+
+# Tool caches
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.coverage

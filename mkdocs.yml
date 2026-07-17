@@ -1,0 +1,57 @@
+site_name: Lucen
+site_description: Comment-pragma parallelization for ordinary Python, never an incorrect result.
+repo_url: https://github.com/fcmv/lucen
+repo_name: fcmv/lucen
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            show_source: false
+            members_order: source
+            show_root_heading: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Reference:
+      - Architecture: architecture.md
+      - Pragmas and clauses: pragmas.md
+      - API: api.md
+      - Glossary: glossary.md
+      - Paper: paper/lucen.md
+      - Technical specification: spec/lucen_technical_spec.md
+      - Engineering guide: implementation/lucen_engineering_doc.md
+      - Formal specifications: formal/README.md
+      - Architecture decisions: adr/README.md

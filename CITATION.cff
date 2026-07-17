@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use Lucen in your work, please cite it as below."
+title: "Lucen: comment-pragma parallelization for ordinary Python"
+abstract: >-
+  Lucen is a source-to-source compiler that automatically parallelizes
+  ordinary Python loops marked with comment pragmas. It parallelizes only the
+  loops it can prove are both safe and worthwhile, and guarantees that a
+  parallel run is bit-identical to the same file executed as plain sequential
+  Python. Backend selection is decided by the data shape rather than the
+  interpreter, and an optional native core accelerates the orchestration while
+  every operation keeps an identical-semantics pure-Python fallback.
+type: software
+authors:
+  - name: "The Lucen Authors"
+version: "1.0.0"
+date-released: "2026-07-17"
+license: Apache-2.0
+repository-code: "https://github.com/fcmv/lucen"
+url: "https://github.com/fcmv/lucen"
+keywords:
+  - python
+  - parallelism
+  - source-to-source compiler
+  - automatic parallelization
+  - free-threaded python
+  - deterministic execution

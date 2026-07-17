@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: native wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build abi3 wheel (CPython >= 3.9, one binary per platform)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          manylinux: auto
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  # A py3-none-any pure-Python wheel so pip install works everywhere the native
+  # abi3 wheel is not installable: free-threaded interpreters (which have no
+  # stable ABI) and exotic architectures. pip prefers the native wheel on GIL
+  # builds and selects this one otherwise, always yielding a working install
+  # that runs the pure-Python fallback. Free-threaded native support is tracked
+  # as ROADMAP M2.
+  pure-wheel:
+    name: pure-Python wheel (py3-none-any)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Assemble and build the pure wheel
+        run: |
+          python -m pip install --upgrade pip build
+          mkdir -p build-pure
+          cp -r lucen build-pure/lucen
+          find build-pure/lucen -name '__pycache__' -type d -prune -exec rm -rf {} +
+          find build-pure/lucen \( -name '*.pyd' -o -name '*.so' -o -name '*.dll' \) -delete
+          cp packaging/pure/pyproject.toml build-pure/pyproject.toml
+          cp README.md LICENSE build-pure/
+          cd build-pure && python -m build --wheel --outdir ../dist
+      - name: Sanity-check the pure wheel imports and reports no native core
+        run: |
+          python -m venv /tmp/checkvenv
+          /tmp/checkvenv/bin/python -m pip install dist/*.whl
+          /tmp/checkvenv/bin/python -c "import lucen; from lucen import _accel; assert _accel.ACCELERATED is False; print('pure wheel OK')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-pure
+          path: dist/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  # A CycloneDX software bill of materials for both dependency trees: the
+  # Python runtime tree (from a clean install of the wheel) and the Rust build
+  # tree (the native crate's locked dependencies).
+  sbom:
+    name: software bill of materials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Python SBOM
+        run: |
+          python -m pip install --upgrade pip cyclonedx-bom
+          python -m venv sbomenv
+          ./sbomenv/bin/pip install .
+          cyclonedx-py environment ./sbomenv > sbom-python.cdx.json
+      - name: Rust SBOM
+        run: |
+          cargo install cargo-cyclonedx
+          cargo cyclonedx --manifest-path lucen_core/Cargo.toml --format json
+          mv lucen_core/lucen_core.cdx.json sbom-rust.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-*.cdx.json
+
+  publish:
+    name: publish to PyPI (trusted publishing)
+    needs: [wheels, pure-wheel, sdist]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC: no long-lived token, and PEP 740 attestations
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          attestations: true
+
+  # Sign the wheels and sdist with Sigstore and publish a GitHub Release with the
+  # artifacts, their signature bundles, and the SBOMs attached.
+  github-release:
+    name: signed GitHub release
+    needs: [publish, sbom]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: dist
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: ./dist/*.whl ./dist/*.tar.gz
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" ./dist/* --notes-from-tag --repo "${GITHUB_REPOSITORY}"
