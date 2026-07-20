@@ -68,6 +68,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--export", metavar="FILE", help="write the report as JSON instead of text"
     )
 
+    p_run = sub.add_parser(
+        "run", help="run a script with Lucen active, rewriting the script itself"
+    )
+    p_run.add_argument("script")
+    p_run.add_argument("args", nargs="*")
+
     args = parser.parse_args(argv)
     if args.command == "explain":
         return explain.run(
@@ -84,5 +90,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return profile.run(
             args.script, args.args, per_block=args.per_block, export=args.export, live=args.live
         )
+    if args.command == "run":
+        from . import run as run_cmd
+
+        return run_cmd.run(args.script, args.args)
     parser.print_help()
     return 0

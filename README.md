@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/lucen.svg)](https://pypi.org/project/lucen/)
 [![Python](https://img.shields.io/badge/python-3.9%20to%203.14t-blue.svg)](#supported-interpreters)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-943%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-951%20passing-brightgreen.svg)](tests/)
 
 **Lucen is a source-to-source compiler and automatic loop parallelizer
 for ordinary Python, driven by comment pragmas.** Unlike existing Python
@@ -11,6 +11,8 @@ parallel frameworks, it asks you to describe *where* parallelism is allowed
 rather than *how* to implement it, and it parallelizes only the loops it can
 prove are both safe and worthwhile. Its one guarantee has no tier and no
 opt-out: **Lucen never produces an incorrect result.**
+
+![Lucen parallelizing a marked loop with bit-identical output](assets/lucen.gif)
 
 Before, ordinary Python:
 
@@ -173,14 +175,23 @@ Add two comment lines around the loop. Nothing else changes:
 Run it again. Nothing happens. That is the point: pragmas are comments, and
 you have not activated anything. Your program is exactly as safe as before.
 
-### Step 4: activate
+### Step 4: run it
 
-Lucen works through an import hook, so activation must happen before the
-module containing your marked loop is imported. The standard pattern is a
-small entry file:
+Run the file with `lucen run`. It rewrites the marked loops in the script you
+point at and then executes it, so the loop you just marked runs in parallel:
+
+```bash
+lucen run work.py
+```
+
+That is the whole story for a script you launch directly. When Lucen is instead
+embedded in a larger application you start yourself, activate the import hook
+once at startup. Activation installs the hook, so it must run before the module
+holding your marked loop is imported, which is why that loop lives in an
+imported module here:
 
 ```python
-# run.py
+# app.py
 import lucen
 lucen.activate()
 
@@ -189,13 +200,13 @@ work.main()
 ```
 
 ```bash
-python run.py
+python app.py
 ```
 
 On a multi-core machine the loop now runs about 3 to 4 times faster, and the
 checksum is identical to the digit. Not approximately identical. Identical.
 
-Two things to know about the entry file:
+Two things to know, either way:
 
 - The `if __name__ == "__main__":` guard in `work.py` matters on Windows and
   macOS. Lucen uses process workers there, and Python re-imports the entry
@@ -437,6 +448,8 @@ Summary across seven interpreters (CPython 3.9, 3.10, 3.11, 3.12, 3.13,
 3.14, and 3.14 free-threaded), medians of 5 after warm-up, 12-core machine.
 "Native Python" is the identical file with the pragmas treated as what they
 are, comments; "Lucen" is the shipped product with its gate deciding.
+
+![Lucen speedup by workload, CPython 3.11 on 12 cores](assets/benchmark.svg)
 
 | Workload | Native Python (ms) | Lucen, gate on (ms) | Best hand-written (ms) |
 |---|---|---|---|

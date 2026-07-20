@@ -635,6 +635,16 @@ calibration decisions, fallbacks, and a per-block parallel efficiency figure
 (observed speedup against workers used), the empirical surface for the
 contention ceiling (§16.3), reported without claiming a cause.
 
+#### 5.15.3 `run`
+
+Rewrites the target script and executes it as `__main__`. Because plain
+`python script.py` runs the entry module before `lucen.activate()` can install
+the hook, a loop marked in the entry script itself is otherwise never rewritten;
+`lucen run` closes that gap, so a single self-contained file parallelizes
+without a separate importable module. The script's directory is placed on
+`sys.path` and the hook is rooted there, so the modules the script imports are
+rewritten too.
+
 ### 5.16 Codegen Performance Canon
 
 The generated code is the hot path; these rules are tested, not stylistic.

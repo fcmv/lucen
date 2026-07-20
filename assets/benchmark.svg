@@ -1,0 +1,55 @@
+<svg width="1000" height="580" viewBox="0 0 1000 580" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Lucen speedup by workload on CPython 3.11, 12 cores</title>
+  <rect width="1000" height="580" fill="#0E1116"/>
+  <text x="60" y="52" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#F0F6FC">Lucen speedup by workload</text>
+  <text x="60" y="84" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" fill="#8B949E">CPython 3.11  ·  12 cores  ·  gate on, vs plain sequential</text>
+
+  <line x1="538" y1="125" x2="538" y2="475" stroke="#30363D" stroke-width="1"/>
+  <line x1="672" y1="125" x2="672" y2="475" stroke="#30363D" stroke-width="1"/>
+  <line x1="806" y1="125" x2="806" y2="475" stroke="#30363D" stroke-width="1"/>
+  <line x1="940" y1="125" x2="940" y2="475" stroke="#30363D" stroke-width="1"/>
+  <line x1="404" y1="120" x2="404" y2="478" stroke="#484F58" stroke-width="1.5" stroke-dasharray="5 4"/>
+
+  <rect x="270" y="137" width="623" height="26" rx="4" fill="#1D9E75"/>
+  <text x="252" y="156" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">heavy map</text>
+  <text x="903" y="156" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#3FBE94">4.65x</text>
+
+  <rect x="270" y="181" width="614" height="26" rx="4" fill="#1D9E75"/>
+  <text x="252" y="200" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">heavy reduction</text>
+  <text x="894" y="200" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#3FBE94">4.58x</text>
+
+  <rect x="270" y="225" width="448" height="26" rx="4" fill="#1D9E75"/>
+  <text x="252" y="244" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">medium map</text>
+  <text x="728" y="244" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#3FBE94">3.34x</text>
+
+  <rect x="270" y="269" width="437" height="26" rx="4" fill="#1D9E75"/>
+  <text x="252" y="288" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">nested heavy</text>
+  <text x="717" y="288" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#3FBE94">3.26x</text>
+
+  <rect x="270" y="313" width="142" height="26" rx="4" fill="#6E7681"/>
+  <text x="252" y="332" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">recognized DAG</text>
+  <text x="422" y="332" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#8B949E">1.06x</text>
+
+  <rect x="270" y="357" width="137" height="26" rx="4" fill="#6E7681"/>
+  <text x="252" y="376" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">buffer map</text>
+  <text x="417" y="376" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#8B949E">1.02x</text>
+
+  <rect x="270" y="401" width="134" height="26" rx="4" fill="#6E7681"/>
+  <text x="252" y="420" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">light map</text>
+  <text x="414" y="420" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#8B949E">1.00x</text>
+
+  <rect x="270" y="445" width="134" height="26" rx="4" fill="#6E7681"/>
+  <text x="252" y="464" text-anchor="end" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" fill="#C9D1D9">light reduction</text>
+  <text x="414" y="464" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#8B949E">1.00x</text>
+
+  <text x="404" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">1x</text>
+  <text x="538" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">2x</text>
+  <text x="672" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">3x</text>
+  <text x="806" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">4x</text>
+  <text x="940" y="498" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">5x</text>
+
+  <rect x="270" y="524" width="14" height="14" rx="3" fill="#1D9E75"/>
+  <text x="292" y="536" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">parallelized (CPU-bound)</text>
+  <rect x="540" y="524" width="14" height="14" rx="3" fill="#6E7681"/>
+  <text x="562" y="536" font-family="-apple-system, sans-serif" font-size="16" fill="#8B949E">left sequential (no harm)</text>
+</svg>

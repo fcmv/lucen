@@ -110,6 +110,11 @@ def _encoding(raw: bytes) -> str:
 
 def run_path(path: str, run_name: str = "__main__") -> dict:
     path = os.path.abspath(path)
+    # Mirror `python script.py`: the script's directory goes on sys.path so its
+    # sibling modules import, and the rewrite hook (rooted there) can rewrite them.
+    script_dir = os.path.dirname(path)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
     with open(path, "rb") as f:
         raw = f.read()
     namespace: dict = {"__name__": run_name, "__file__": path, "__builtins__": __builtins__}

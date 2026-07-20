@@ -37,7 +37,7 @@ migration path.
   records. The public exception types, which are re-exported at the top level
   (`lucen.LucenError`, `lucen.ClauseValueError`, and the parallel
   runtime errors); catch them from there rather than from an internal module.
-- **The CLI contract.** The `lucen explain` and `lucen profile`
+- **The CLI contract.** The `lucen explain`, `lucen profile`, and `lucen run`
   subcommands, their documented flags, and the `--strict --baseline` gate
   behavior. The human-readable text of reports is not part of this contract (see
   below).

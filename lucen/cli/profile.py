@@ -20,13 +20,15 @@ def run(
     from lucen.execution import dispatch
     from lucen.support.errors import get_fallback_report
 
+    old_argv = sys.argv
+    sys.argv = [script] + list(argv)
+    # Activate after sys.argv points at the target script, so the import hook is
+    # rooted at the script's directory and rewrites the modules it imports.
     lucen.activate()
     stop_live = threading.Event()
     if live:
         threading.Thread(target=_live_loop, args=(stop_live,), daemon=True).start()
 
-    old_argv = sys.argv
-    sys.argv = [script] + list(argv)
     wall0 = time.perf_counter()
     cpu0 = time.process_time()
     exit_code = 0

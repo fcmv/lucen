@@ -4,13 +4,10 @@ import pytest
 
 _GRAALPY = sys.implementation.name == "graalpy"
 
-# A handful of tests assert CPython implementation details rather than the
-# bit-identity guarantee: two disassemble the generated chunk function with the
-# `dis` module (unavailable on GraalPy), one asserts the cost-model probe's
-# routing decision (tuned to CPython's execution profile), and one exercises the
-# CPython buffer fast path. GraalPy is a different VM and support for it is
-# best-effort (experimental); the rest of the suite, which does run there,
-# covers correctness. Skip only these, and only on GraalPy.
+# These tests assert CPython implementation details (bytecode shape via `dis`,
+# the CPython-tuned cost-model probe, the buffer fast path), not the bit-identity
+# guarantee that the rest of the suite still checks on GraalPy. GraalPy is a
+# different VM and best-effort, so skip only these, and only there.
 _GRAALPY_SKIP = frozenset(
     {
         "test_chunk_function_has_zero_global_loads",

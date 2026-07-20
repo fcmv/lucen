@@ -1,0 +1,26 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Lucen: parallelize Python loops with two comments, bit-identical to sequential</title>
+  <rect width="1280" height="640" fill="#0E1116"/>
+  <rect x="0" y="0" width="1280" height="6" fill="#1D9E75"/>
+
+  <text x="80" y="150" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="600" letter-spacing="3" fill="#1D9E75">OPEN SOURCE  ·  APACHE-2.0  ·  PYPI</text>
+
+  <text x="76" y="292" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="120" font-weight="600" fill="#F0F6FC">lucen</text>
+
+  <text x="80" y="372" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40" font-weight="500" fill="#C9D1D9">Parallelize Python loops</text>
+  <text x="80" y="420" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40" font-weight="500" fill="#C9D1D9">with two comments.</text>
+  <text x="80" y="472" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="26" font-weight="400" fill="#8B949E">Bit-identical to plain sequential Python.</text>
+
+  <text x="80" y="558" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="30" fill="#1D9E75">$ pip install lucen</text>
+  <text x="80" y="598" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="24" fill="#8B949E">github.com/fcmv/lucen</text>
+
+  <rect x="740" y="170" width="460" height="300" rx="14" fill="#161B22" stroke="#30363D" stroke-width="1"/>
+  <circle cx="772" cy="205" r="7" fill="#F0997B"/>
+  <circle cx="796" cy="205" r="7" fill="#EF9F27"/>
+  <circle cx="820" cy="205" r="7" fill="#97C459"/>
+  <text x="1176" y="211" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="18" fill="#484F58">score.py</text>
+  <text x="772" y="272" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="23" font-weight="600" fill="#2DD4A7"># LUCEN START</text>
+  <text x="772" y="312" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="23" fill="#C9D1D9">for i in range(len(rows)):</text>
+  <text x="796" y="352" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="23" fill="#C9D1D9">out[i] = expensive(rows[i])</text>
+  <text x="772" y="392" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="23" font-weight="600" fill="#2DD4A7"># LUCEN END</text>
+</svg>

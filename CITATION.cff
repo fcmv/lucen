@@ -12,8 +12,8 @@ abstract: >-
 type: software
 authors:
   - name: "The Lucen Authors"
-version: "1.0.0"
-date-released: "2026-07-17"
+version: "1.1.0"
+date-released: "2026-07-19"
 license: Apache-2.0
 repository-code: "https://github.com/fcmv/lucen"
 url: "https://github.com/fcmv/lucen"

@@ -4,6 +4,23 @@ All notable changes to Lucen are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-07-19
+
+### Added
+
+- `lucen run <script>` runs a script with Lucen active, rewriting the marked
+  loops in the script itself. A single self-contained file now parallelizes
+  without a separate importable entry module. Plain `python script.py` cannot do
+  this, because the entry module is already compiled and running before
+  `lucen.activate()` installs the import hook.
+
+### Fixed
+
+- `lucen profile` now parallelizes loops in modules the target script imports.
+  It previously did not place the script's directory on `sys.path`, so an
+  imported sibling module raised `ModuleNotFoundError`, and it rooted the import
+  hook at the wrong directory, so imported modules were never rewritten.
+
 ## [1.0.0] - 2026-07-17
 
 First public release.

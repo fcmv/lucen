@@ -1,6 +1,6 @@
 [package]
 name = "lucen_core"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Native acceleration core for Lucen: write-set audits and reduction folds."
 license = "Apache-2.0"

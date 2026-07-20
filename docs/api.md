@@ -10,6 +10,9 @@ importable from the top-level `lucen` package.
 
 ::: lucen.deactivate
 
+For a script you launch directly, skip `activate()` and run the file with the
+`lucen run` command, which rewrites and executes it in one step.
+
 ## Reading what happened
 
 ::: lucen.get_fallback_report
