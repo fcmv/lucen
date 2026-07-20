@@ -77,3 +77,45 @@ jobs:
         with:
           name: benchmark-${{ github.run_number }}
           path: bench-current.json
+
+  # Mutation testing on the correctness core: inject one change per mutant and
+  # check the suite kills it. It runs on the pure-Python path (native disabled)
+  # so the fallback code is exercised rather than shadowed by the native core,
+  # and against the source (editable install) so mutants are actually seen. Non
+  # gating and time bounded; survivors (mutations no test killed) are uploaded
+  # for triage. Some survivors are equivalent mutants, so the report is a review
+  # queue, not a score to defend.
+  mutation:
+    name: mutation testing (survivors report)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 180
+    env:
+      LUCEN_DISABLE_NATIVE: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis "mutmut==2.5.1"
+          pip install -e .
+      - name: Mutate the correctness core and kill mutants with the suite
+        run: |
+          timeout 150m mutmut run \
+            --paths-to-mutate "lucen/execution/_accel.py,lucen/execution/runtime.py,lucen/execution/planning.py,lucen/analysis/purity.py,lucen/execution/dispatch.py" \
+            --runner "python -m pytest -x -q tests/unit tests/property" \
+            --tests-dir "tests/" \
+            --no-progress --CI || true
+      - name: Survivors report
+        if: always()
+        run: mutmut results | tee mutation-survivors.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-survivors
+          path: mutation-survivors.txt
