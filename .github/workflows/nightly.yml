@@ -13,8 +13,8 @@ jobs:
     name: extended fuzz (nightly budget)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - uses: dtolnay/rust-toolchain@stable
@@ -39,7 +39,7 @@ jobs:
     name: miri (nightly)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
@@ -55,8 +55,8 @@ jobs:
     name: perf tracking (record + compare)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - uses: dtolnay/rust-toolchain@stable
@@ -73,7 +73,7 @@ jobs:
           python tests/benchmarks/matrix_bench.py bench-current.json
           python tests/benchmarks/compare_baseline.py \
             tests/benchmarks/results/py311.json bench-current.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: benchmark-${{ github.run_number }}
           path: bench-current.json
@@ -94,8 +94,8 @@ jobs:
       LUCEN_DISABLE_NATIVE: "1"
       PYTHONIOENCODING: "utf-8"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - uses: dtolnay/rust-toolchain@stable
@@ -114,7 +114,7 @@ jobs:
       - name: Survivors report
         if: always()
         run: mutmut results | tee mutation-survivors.txt || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutation-survivors
