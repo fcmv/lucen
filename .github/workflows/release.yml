@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build abi3 wheel (CPython >= 3.9, one binary per platform)
         uses: PyO3/maturin-action@v1
@@ -26,7 +26,7 @@ jobs:
           args: --release --out dist
           manylinux: auto
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-wheels-${{ matrix.os }}
           path: dist/*.whl
@@ -41,8 +41,8 @@ jobs:
     name: pure-Python wheel (py3-none-any)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Assemble and build the pure wheel
@@ -60,7 +60,7 @@ jobs:
           python -m venv /tmp/checkvenv
           /tmp/checkvenv/bin/python -m pip install dist/*.whl
           /tmp/checkvenv/bin/python -c "import lucen; from lucen.execution import _accel; assert _accel.ACCELERATED is False; print('pure wheel OK')"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-pure
           path: dist/*.whl
@@ -68,12 +68,12 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-sdist
           path: dist/*.tar.gz
@@ -85,8 +85,8 @@ jobs:
     name: software bill of materials
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - uses: dtolnay/rust-toolchain@stable
@@ -101,7 +101,7 @@ jobs:
           cargo install cargo-cyclonedx
           cargo cyclonedx --manifest-path lucen_core/Cargo.toml --format json
           mv lucen_core/lucen_core.cdx.json sbom-rust.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom-*.cdx.json
@@ -115,7 +115,7 @@ jobs:
     permissions:
       id-token: write        # OIDC: no long-lived token, and PEP 740 attestations
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           path: dist
@@ -139,20 +139,20 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sbom
           path: dist
       - name: Sign with Sigstore
-        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        uses: sigstore/gh-action-sigstore-python@v3.4.0
         with:
           inputs: ./dist/*.whl ./dist/*.tar.gz
       - name: Create the release
