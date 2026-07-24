@@ -550,7 +550,7 @@ Contributions are welcome. Start with `pip install -e ".[dev]" && pytest`
 pipeline is the invariant suite: correctness is proven bit-identical across
 backends, and no routing change lands without benchmark evidence. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the full process,
-[AI_USAGE.md](AI_USAGE.md) for the policy on AI-assisted contributions,
+[AI_USAGE.md](AI_USAGE_GUIDELINE_FOR_PR.md) for the policy on AI-assisted contributions,
 [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made, and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. Security
 issues go through [SECURITY.md](SECURITY.md), not public issues.
