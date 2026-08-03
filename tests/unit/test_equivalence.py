@@ -163,6 +163,19 @@ def test_enumerate_equivalence(seed):
 
 
 @pytest.mark.parametrize("seed", range(4))
+def test_enumerate_sequential_twin(seed):
+    # The sequential twin builds its iterable from remaining_iter(), whose
+    # enumerate branch (index/value pairing) the forced-parallel enumerate tests
+    # never reach.
+    rng = random.Random(seed + 700)
+    n = rng.choice([2, 6, 40, 130])
+    items = [rng.randint(-9, 9) for _ in range(n)]
+    src = block(["out[idx] = item * item + idx"], "for idx, item in enumerate(items):")
+    got, _ = run_backend(src, {"items": items, "out": [0] * n}, "sequential")
+    assert got["out"] == golden(src, {"items": items, "out": [0] * n})["out"]
+
+
+@pytest.mark.parametrize("seed", range(4))
 def test_dict_sequence_equivalence(seed):
     rng = random.Random(seed + 400)
     n = rng.choice([1, 4, 25, 90])

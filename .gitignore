@@ -35,3 +35,7 @@ site/
 .mypy_cache/
 .ruff_cache/
 .coverage
+
+# Mutation testing
+.mutmut-cache
+mutants/
