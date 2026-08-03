@@ -182,6 +182,29 @@ This is the standard `multiprocessing` requirement.
 
 **Severity.** Low. Detected and handled; the fix is a one-line guard.
 
+### 2.4 Destructors run in the worker that owns the object
+
+**What.** An object created and released inside the loop body has its `__del__`
+run on the worker, not on the thread or process that ran the loop sequentially.
+Under the process backend the object never exists in the parent at all, so a
+destructor side effect (appending to a module list, decrementing a counter,
+flushing a handle) is performed in the child and is not observed by the parent.
+
+**Why the purity proof does not catch it.** The proof reads the body and the
+helpers it calls (spec 5.4). A destructor is not called anywhere in that source:
+it is attached to a type, and it fires when the interpreter releases the object.
+A body that allocates such an object therefore reads as pure and parallelizes,
+even though releasing the object has an effect.
+
+**What to do.** Do not rely on `__del__` for program-visible effects in a marked
+loop; this is fragile in plain Python too, where release timing is an
+implementation detail. Use an explicit `close()`, a `with` block, or return the
+value you need and act on it after the loop.
+
+**Severity.** Moderate, and narrow. The committed loop results stay
+bit-identical; what differs is the context and the parent-visible effect of
+destructor side effects, which the value contract does not cover.
+
 ---
 
 ## 3. Performance gaps
