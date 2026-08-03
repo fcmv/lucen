@@ -157,9 +157,13 @@ def test_enumerate_equivalence(seed):
     items = [rng.randint(-9, 9) for _ in range(n)]
     src = block(["out[idx] = item * item + idx"], "for idx, item in enumerate(items):")
     env = {"items": items, "out": [0] * n}
+    expected = golden(src, env)
     for backend in ("thread", "process"):
-        got, _ = run_backend(src, copy.deepcopy(env), backend)
-        assert got["out"] == golden(src, env)["out"]
+        got, rebound = run_backend(src, copy.deepcopy(env), backend)
+        assert got["out"] == expected["out"]
+        # Python leaves the loop targets bound to the last iteration; the
+        # parallel path reconstructs them instead of observing them.
+        assert rebound == (expected["idx"], expected["item"])
 
 
 @pytest.mark.parametrize("seed", range(4))
