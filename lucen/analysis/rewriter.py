@@ -11,6 +11,7 @@ from lucen.support.errors import (
     FallbackRecord,
     IllegalSyntaxInBlockError,
     LucenError,
+    UnsupportedIterableError,
     raise_or_fallback,
 )
 
@@ -135,8 +136,10 @@ def analyze_source(
             parents[child] = node
     statements = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)]
     trusted = frozenset(getattr(scan, "trusted_names", ()) or ())
+    shadowed = shadowed_builtins(tree)
     analyses = [
-        _analyze_block(b, statements, parents, filename, branch_sensitive) for b in scan.blocks
+        _analyze_block(b, statements, parents, filename, branch_sensitive, shadowed)
+        for b in scan.blocks
     ]
     for analysis in analyses:
         analysis.trusted_names = trusted
@@ -149,11 +152,12 @@ def _analyze_block(
     parents: Dict[ast.AST, ast.AST],
     filename: str,
     branch_sensitive: bool = False,
+    shadowed: FrozenSet[str] = frozenset(),
 ) -> BlockAnalysis:
     analysis = BlockAnalysis(block, filename)
     analysis.branch_sensitive = branch_sensitive
     try:
-        _analyze_into(analysis, statements, parents)
+        _analyze_into(analysis, statements, parents, shadowed)
     except LucenError as exc:
         analysis.fallbacks.append(raise_or_fallback(exc))
     except Exception as exc:
@@ -165,7 +169,10 @@ def _analyze_block(
 
 
 def _analyze_into(
-    analysis: BlockAnalysis, statements: List[ast.stmt], parents: Dict[ast.AST, ast.AST]
+    analysis: BlockAnalysis,
+    statements: List[ast.stmt],
+    parents: Dict[ast.AST, ast.AST],
+    shadowed: FrozenSet[str] = frozenset(),
 ) -> None:
     block, filename = analysis.block, analysis.filename
     lo, hi = block.start.lineno, block.end.lineno
@@ -181,6 +188,17 @@ def _analyze_into(
         raise IllegalSyntaxInBlockError(
             "for/else is not supported in a marked block", file=filename, line=for_node.lineno
         )
+
+    header = for_node.iter
+    if isinstance(header, ast.Call) and isinstance(header.func, ast.Name):
+        name = header.func.id
+        if name in shadowed:
+            raise UnsupportedIterableError(
+                f"'{name}' is rebound in this module, so the loop header cannot be "
+                f"assumed to have builtin {name}() semantics",
+                file=filename,
+                line=for_node.lineno,
+            )
 
     domain = _loop_domain(for_node)
     collector = _Collector(filename)
@@ -247,6 +265,40 @@ def _loop_domain(node: ast.For) -> LoopDomain:
 
 def _target_names(node: ast.AST) -> List[str]:
     return [n.id for n in ast.walk(node) if isinstance(n, ast.Name)]
+
+
+# Codegen drives these headers itself (sliced index ranges, re-paired enumerate)
+# rather than calling them, so the domain only holds if the names are the builtins.
+DOMAIN_BUILTINS = frozenset({"range", "enumerate"})
+
+
+def shadowed_builtins(tree: ast.AST) -> FrozenSet[str]:
+    """Names in DOMAIN_BUILTINS that the module rebinds anywhere.
+
+    Scope-insensitive on purpose: that costs parallelism, never correctness.
+    """
+    bound: Set[str] = set()
+
+    def note(name: Optional[str]) -> None:
+        if name in DOMAIN_BUILTINS:
+            bound.add(name)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            note(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            note(node.name)
+        elif isinstance(node, ast.arg):
+            note(node.arg)
+        elif isinstance(node, ast.ExceptHandler):
+            note(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                note(name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                note(alias.asname or alias.name.split(".", 1)[0])
+    return frozenset(bound)
 
 
 class _Collector:

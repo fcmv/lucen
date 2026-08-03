@@ -37,6 +37,37 @@ def cls(analysis, name):
     return analysis.targets[name].classification
 
 
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        "def enumerate(seq):\n    return []\n",
+        "enumerate = None\n",
+        "from itertools import count as enumerate\n",
+    ],
+)
+def test_rebound_enumerate_declines_the_block(shadow):
+    # Codegen re-pairs an enumerate loop from the inner sequence instead of
+    # calling enumerate, so a rebound name would silently change the result.
+    src = shadow + block(["out[idx] = item"], header="for idx, item in enumerate(items):")
+    analysis = analyze_one(src)
+    assert not analysis.ok
+    assert analysis.fallbacks[0].error == "UnsupportedIterableError"
+
+
+def test_rebound_range_declines_the_block():
+    src = "def range(n):\n    return []\n" + block(["out[i] = i"], header="for i in range(n):")
+    analysis = analyze_one(src)
+    assert not analysis.ok
+    assert analysis.fallbacks[0].error == "UnsupportedIterableError"
+
+
+def test_untouched_builtin_header_still_parallelizes():
+    src = "values = [1, 2]\n" + block(
+        ["out[idx] = item"], header="for idx, item in enumerate(items):"
+    )
+    assert analyze_one(src).ok
+
+
 def test_recognized_dag_example_spec_9_3():
     a = analyze_one(block(["results[i] = combine(results[i // 2], weights[i])"]))
     assert a.ok
