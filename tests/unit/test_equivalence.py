@@ -105,6 +105,34 @@ def test_map_equivalence(body, header, backend, seed):
     assert got["ys"] == golden(src, env)["ys"]
 
 
+class Tracked:
+    """A reduction accumulator that records the order it was combined in."""
+
+    def __init__(self, value, order=None):
+        self.value = value
+        self.order = [] if order is None else order
+
+    def __add__(self, other):
+        return Tracked(self.value + other.value, self.order + [other.value])
+
+
+def test_reduction_calls_user_add_in_sequential_order():
+    # Chunks only gather contributions; the fold combines them afterwards, so a
+    # user __add__ must see the same operands in the same order as the plain loop.
+    # Few chunks over many iterations so each chunk folds several contributions.
+    src = block(
+        ["total = total + Tracked(xs[i])"],
+        "for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    xs = list(range(24))
+    env = {"xs": xs, "total": Tracked(0), "Tracked": Tracked}
+    got, _ = run_backend(src, env, "thread")
+    expected = golden(src, env)["total"]
+    assert got["total"].value == expected.value
+    assert got["total"].order == expected.order == xs
+
+
 REDUCTION_CASES = [
     (["total += xs[i]"], "for i in range(len(xs)):", "total", 0),
     (["total += xs[i] * 1.5"], "for i in range(len(xs)):", "total", 0.0),
