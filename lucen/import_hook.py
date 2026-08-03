@@ -7,6 +7,8 @@ import importlib.util
 import os
 import sys
 import tokenize
+import types
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from io import BytesIO
 from typing import List, Optional, Tuple
@@ -108,6 +110,27 @@ def _encoding(raw: bytes) -> str:
     return tokenize.detect_encoding(BytesIO(raw).readline)[0]
 
 
+@contextmanager
+def _as_entry_module(path: str, run_name: str):
+    """Publish the script as sys.modules[run_name] for the duration of the run.
+
+    Executing into a bare dict leaves the entry module pointing at Lucen's own
+    launcher, where the spawn-safety scan (spec 5.10) then looks for the guard.
+    """
+    module = types.ModuleType(run_name)
+    module.__file__ = path
+    module.__builtins__ = __builtins__
+    previous = sys.modules.get(run_name)
+    sys.modules[run_name] = module
+    try:
+        yield module.__dict__
+    finally:
+        if previous is None:
+            sys.modules.pop(run_name, None)
+        else:
+            sys.modules[run_name] = previous
+
+
 def run_path(path: str, run_name: str = "__main__") -> dict:
     path = os.path.abspath(path)
     # Mirror `python script.py`: the script's directory goes on sys.path so its
@@ -117,24 +140,24 @@ def run_path(path: str, run_name: str = "__main__") -> dict:
         sys.path.insert(0, script_dir)
     with open(path, "rb") as f:
         raw = f.read()
-    namespace: dict = {"__name__": run_name, "__file__": path, "__builtins__": __builtins__}
-    if PREFILTER_TOKEN.encode() not in raw:
-        exec(compile(raw, path, "exec"), namespace)
+    with _as_entry_module(path, run_name) as namespace:
+        if PREFILTER_TOKEN.encode() not in raw:
+            exec(compile(raw, path, "exec"), namespace)
+            return namespace
+        source = raw.decode(_encoding(raw))
+        root = os.path.dirname(path)
+        entry = cache.load(root, path, source)
+        if entry is None:
+            entry = rewrite_module(source, path)
+            cache.store(root, path, source, entry)
+        if entry.rewritten is None:
+            exec(compile(source, path, "exec"), namespace)
+            return namespace
+        namespace["_lucen_rt"] = dispatch
+        for line, spec in entry.specs:
+            namespace[f"_PLX_SPEC_{line}"] = spec
+        exec(compile(entry.rewritten, path, "exec"), namespace)
         return namespace
-    source = raw.decode(_encoding(raw))
-    root = os.path.dirname(path)
-    entry = cache.load(root, path, source)
-    if entry is None:
-        entry = rewrite_module(source, path)
-        cache.store(root, path, source, entry)
-    if entry.rewritten is None:
-        exec(compile(source, path, "exec"), namespace)
-        return namespace
-    namespace["_lucen_rt"] = dispatch
-    for line, spec in entry.specs:
-        namespace[f"_PLX_SPEC_{line}"] = spec
-    exec(compile(entry.rewritten, path, "exec"), namespace)
-    return namespace
 
 
 def rewrite_module(source: str, filename: str) -> cache.Entry:
