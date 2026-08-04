@@ -2,7 +2,7 @@
   <title>Lucen speedup by workload on CPython 3.11, 12 cores</title>
   <rect width="1000" height="580" fill="#0E1116"/>
   <text x="60" y="52" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#F0F6FC">Lucen speedup by workload</text>
-  <text x="60" y="84" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" fill="#8B949E">CPython 3.11  ·  12 cores  ·  gate on, vs plain sequential</text>
+  <text x="60" y="84" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" fill="#8B949E">CPython 3.11  |  12 cores  |  gate on, vs plain sequential</text>
 
   <line x1="538" y1="125" x2="538" y2="475" stroke="#30363D" stroke-width="1"/>
   <line x1="672" y1="125" x2="672" y2="475" stroke="#30363D" stroke-width="1"/>

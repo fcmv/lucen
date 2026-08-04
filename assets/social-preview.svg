@@ -3,7 +3,7 @@
   <rect width="1280" height="640" fill="#0E1116"/>
   <rect x="0" y="0" width="1280" height="6" fill="#1D9E75"/>
 
-  <text x="80" y="150" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="600" letter-spacing="3" fill="#1D9E75">OPEN SOURCE  ·  APACHE-2.0  ·  PYPI</text>
+  <text x="80" y="150" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="600" letter-spacing="3" fill="#1D9E75">OPEN SOURCE  |  APACHE-2.0  |  PYPI</text>
 
   <text x="76" y="292" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="120" font-weight="600" fill="#F0F6FC">lucen</text>
 
