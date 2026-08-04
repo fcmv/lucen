@@ -4,6 +4,25 @@ All notable changes to Lucen are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-08-04
+
+### Fixed
+
+- `lucen run` now executes the target script as the real `__main__` module. The
+  spawn-safety scan previously inspected Lucen's own launcher, found no
+  `if __name__ == "__main__"` guard, and refused the process backend, so marked
+  loops ran sequentially on spawn platforms (#4).
+- A loop whose `range` or `enumerate` header is rebound in the module is now
+  declined. Codegen substitutes builtin semantics for those headers, so a
+  rebound name could produce a result that differed from sequential Python (#5).
+- An interrupted parallel block now drains its running chunks before unwinding,
+  instead of leaving workers writing into the caller's containers (#6).
+- Failure to start a worker falls back to a reported sequential run instead of
+  raising partway through the loop (#7).
+- Release notes are built from this changelog. The published notes previously
+  showed the commit subject, because the tag annotation is not present in the
+  checkout the release job runs from.
+
 ## [1.1.0] - 2026-07-19
 
 ### Added
