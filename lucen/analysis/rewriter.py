@@ -288,51 +288,79 @@ COMPREHENSION_INDEX = "_plx_ci"
 
 @dataclass
 class ComprehensionPlan:
-    """A marked comprehension rewritten as an equivalent indexed loop."""
+    """A marked comprehension rewritten as an equivalent indexed loop.
+
+    Every form builds one positional list; the kind and filter are applied
+    afterwards, so ordering never depends on chunk scheduling.
+    """
 
     target: str
-    iter_source: str
+    kind: str
+    filtered: bool
+    nested: bool
+
+
+_COMPREHENSION_KINDS = {ast.ListComp: "list", ast.SetComp: "set", ast.DictComp: "dict"}
 
 
 def _comprehension_loop(stmt: ast.stmt) -> Optional[Tuple[ast.For, ComprehensionPlan]]:
-    """Desugar `out = [elt for t in it]` into an equivalent positional loop.
+    """Desugar a marked comprehension into an equivalent positional loop.
 
     A real `for` node inherits the existing analysis and commit path unchanged.
-    Only the unfiltered single-generator list form is desugared here.
+    A bare generator expression is left alone because it is lazy.
     """
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
         return None
     target = stmt.targets[0]
     value = stmt.value
-    if not isinstance(target, ast.Name) or not isinstance(value, ast.ListComp):
+    kind = _COMPREHENSION_KINDS.get(type(value))
+    if not isinstance(target, ast.Name) or kind is None:
         return None
-    if len(value.generators) != 1:
+    generators = value.generators
+    if any(getattr(gen, "is_async", 0) for gen in generators):
         return None
-    gen = value.generators[0]
-    if gen.ifs or getattr(gen, "is_async", 0):
-        return None
+    outer = generators[0]
 
-    index = ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Store())
+    if kind == "dict":
+        element: ast.expr = ast.Tuple(elts=[value.key, value.value], ctx=ast.Load())
+    else:
+        element = value.elt
+    if len(generators) > 1:
+        # Inner generators stay a comprehension inside the body: the outer
+        # iterable is what gets chunked, and each slot holds that row's run.
+        element = ast.ListComp(elt=element, generators=generators[1:])
+
+    slot = ast.Subscript(
+        value=ast.Name(id=target.id, ctx=ast.Load()),
+        slice=ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Load()),
+        ctx=ast.Store(),
+    )
+    body: List[ast.stmt] = [ast.Assign(targets=[slot], value=element)]
+    if outer.ifs:
+        test = outer.ifs[0]
+        for extra in outer.ifs[1:]:
+            test = ast.BoolOp(op=ast.And(), values=[test, extra])
+        body = [ast.If(test=test, body=body, orelse=[])]
+
     loop = ast.For(
-        target=ast.Tuple(elts=[index, gen.target], ctx=ast.Store()),
-        iter=ast.Call(func=ast.Name(id="enumerate", ctx=ast.Load()), args=[gen.iter], keywords=[]),
-        body=[
-            ast.Assign(
-                targets=[
-                    ast.Subscript(
-                        value=ast.Name(id=target.id, ctx=ast.Load()),
-                        slice=ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Load()),
-                        ctx=ast.Store(),
-                    )
-                ],
-                value=value.elt,
-            )
-        ],
+        target=ast.Tuple(
+            elts=[ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Store()), outer.target], ctx=ast.Store()
+        ),
+        iter=ast.Call(
+            func=ast.Name(id="enumerate", ctx=ast.Load()), args=[outer.iter], keywords=[]
+        ),
+        body=body,
         orelse=[],
     )
     ast.copy_location(loop, stmt)
     ast.fix_missing_locations(loop)
-    return loop, ComprehensionPlan(target=target.id, iter_source=ast.unparse(gen.iter))
+    plan = ComprehensionPlan(
+        target=target.id,
+        kind=kind,
+        filtered=bool(outer.ifs),
+        nested=len(generators) > 1,
+    )
+    return loop, plan
 
 
 def shadowed_builtins(tree: ast.AST) -> FrozenSet[str]:

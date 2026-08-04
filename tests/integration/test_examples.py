@@ -63,6 +63,71 @@ if __name__ == "__main__":
 """
 
 
+ALL_COMPREHENSIONS_SCRIPT = """
+import math
+
+
+def f(x):
+    acc = 0.0
+    for k in range(120):
+        acc += math.sin(x * 0.001 + k) * math.cos(k * 0.5)
+    return acc
+
+
+def key(x):
+    return "k%d" % (x % 97)
+
+
+def keep(x):
+    return x % 3 != 0
+
+
+def main():
+    xs = list(range(600))
+    ys = [1, 2, 3]
+    # LUCEN START
+    a = [f(x) for x in xs]
+    # LUCEN END
+    # LUCEN START
+    b = [f(x) for x in xs if keep(x)]
+    # LUCEN END
+    # LUCEN START
+    c = {key(x): f(x) for x in xs}
+    # LUCEN END
+    # LUCEN START
+    d = {round(f(x), 6) for x in xs}
+    # LUCEN END
+    # LUCEN START
+    e = [x * y for x in xs for y in ys]
+    # LUCEN END
+    # LUCEN START
+    g = {key(x): f(x) for x in xs if keep(x)}
+    # LUCEN END
+    print("checksum:", len(a), len(b), len(c), len(d), len(e), len(g))
+    print("order:", list(c)[:4], list(g)[:4], sorted(d)[:2])
+    print("sums:", "%.10f" % sum(a), "%.10f" % sum(b), sum(e))
+    print("leaked:", [n for n in ("x", "y") if n in dir()])
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def test_every_comprehension_form_is_bit_identical(tmp_path):
+    # Dict and set results are rebuilt from ordered slots, so insertion order
+    # (and therefore iteration order) has to match plain Python too.
+    script = tmp_path / "allcomp.py"
+    script.write_text(ALL_COMPREHENSIONS_SCRIPT, encoding="utf-8")
+    plain = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    lucen = subprocess.run(
+        [sys.executable, "-m", "lucen", "run", str(script)], capture_output=True, text=True
+    )
+    assert plain.returncode == 0, plain.stderr
+    assert lucen.returncode == 0, lucen.stderr
+    assert lucen.stdout == plain.stdout
+
+
 def test_list_comprehension_is_bit_identical(tmp_path):
     # A comprehension desugars to an indexed loop, so the result must match
     # plain Python exactly and the comprehension variable must not leak.

@@ -383,27 +383,33 @@ def test_inner_loop_break_is_not_outer_early_exit():
     assert not a.has_break
 
 
-COMPREHENSIONS_DECLINED = [
-    "out = [f(r) for r in rs if c(r)]",
-    "out = [f(a, b) for a in rs for b in ys]",
-    "out = {k(r): f(r) for r in rs}",
-    "out = {f(r) for r in rs}",
-    "out = (f(r) for r in rs)",
+COMPREHENSION_FORMS = [
+    ("out = [f(r) for r in rs]", "list", False, False),
+    ("out = [f(r) for r in rs if c(r)]", "list", True, False),
+    ("out = {k(r): f(r) for r in rs}", "dict", False, False),
+    ("out = {k(r): f(r) for r in rs if c(r)}", "dict", True, False),
+    ("out = {f(r) for r in rs}", "set", False, False),
+    ("out = [f(a, b) for a in rs for b in ys]", "list", False, True),
+    ("out = [f(a, b) for a in rs if c(a) for b in ys]", "list", True, True),
 ]
 
 
-def test_list_comprehension_desugars_to_an_indexed_loop():
-    src = "# LUCEN START\nout = [score(r) for r in records]\n# LUCEN END\n"
+@pytest.mark.parametrize("line,kind,filtered,nested", COMPREHENSION_FORMS)
+def test_comprehension_desugars_to_an_indexed_loop(line, kind, filtered, nested):
+    src = f"# LUCEN START\n{line}\n# LUCEN END\n"
     a = analyze_one(src)
     assert a.ok
-    assert a.comprehension.target == "out"
+    plan = a.comprehension
+    assert (plan.target, plan.kind, plan.filtered, plan.nested) == ("out", kind, filtered, nested)
+    # every form commits through the same proven-index slab path
     assert a.targets["out"].classification is Classification.SHARED_INDEXED_SAFE
     assert a.targets["out"].audit_tier is AuditTier.BY_PROOF
 
 
-@pytest.mark.parametrize("line", COMPREHENSIONS_DECLINED)
-def test_unsupported_comprehension_forms_are_declined(line):
-    src = f"# LUCEN START\n{line}\n# LUCEN END\n"
+def test_generator_expression_is_declined():
+    # A generator expression is lazy; evaluating it here would change when its
+    # elements are produced, so it is never desugared.
+    src = "# LUCEN START\nout = (f(r) for r in rs)\n# LUCEN END\n"
     a = analyze_one(src)
     assert not a.ok
     assert a.fallbacks[0].error == "IllegalSyntaxInBlockError"

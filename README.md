@@ -497,7 +497,8 @@ The prominent ones, stated plainly:
   `backend=thread`.
 - **No native acceleration core on free-threaded builds** (the abi3 wheel
   does not load there); the pure-Python fallback is complete and tested.
-- **One block per pragma pair, one loop per block, no `async` bodies.**
+- **One block per pragma pair, one loop or comprehension per block, no `async`
+  bodies.** Generator expressions are lazy and are never parallelized.
 
 The complete inventory with reproduction notes lives in
 [LIMITATIONS.md](LIMITATIONS.md), and what is planned against each item in

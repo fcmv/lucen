@@ -204,17 +204,19 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
     else:
         iter_src = ast.unparse(for_node.iter)
     result = f"_plx_r_{spec.line}"
+    plan = analysis.comprehension
     prologue: List[str] = []
-    if analysis.comprehension is not None:
+    if plan is not None:
         # Size the result before dispatch, from a single materialization: the
         # source may be a one-shot iterator, and reading it twice (once to size,
-        # once to iterate) would consume it. Comprehension targets do not leak
-        # in Python 3, so the loop variables are deliberately not rebound below.
+        # once to iterate) would consume it. Unwritten slots keep the sentinel so
+        # a filtered element is distinguishable from a legitimate None.
         source = f"_plx_src_{spec.line}"
+        fill = "_lucen_rt.SKIP" if plan.filtered else "None"
         prologue = [
             f"{indent}{source} = {iter_src} if isinstance({iter_src}, (list, tuple)) "
             f"else list({iter_src})",
-            f"{indent}{analysis.comprehension.target} = [None] * len({source})",
+            f"{indent}{plan.target} = [{fill}] * len({source})",
         ]
         iter_src = source
     env_items = ", ".join(f"{name!r}: {name}" for name in spec.arg_names)
@@ -222,8 +224,10 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
         f"{indent}{result} = _lucen_rt.execute(_PLX_SPEC_{spec.line}, "
         f"{iter_src}, {{{env_items}}}, globals())",
     ]
-    if analysis.comprehension is not None:
-        return prologue + call
+    if plan is not None:
+        # Comprehension targets do not leak in Python 3, so the loop variables
+        # are deliberately not rebound.
+        return prologue + call + _comprehension_epilogue(plan, indent)
     rebind = ", ".join(
         artifact.loop_targets + [r.scalar for r in artifact.reductions if "." not in r.scalar]
     )
@@ -231,3 +235,26 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
         f"{indent}if {result} is not None:",
         f"{indent}    ({rebind},) = {result}",
     ]
+
+
+def _comprehension_epilogue(plan, indent: str) -> List[str]:
+    """Turn the positional slots into the comprehension's own result.
+
+    Runs sequentially after the join, so the rebuilt set or dict sees the same
+    insertion order, and therefore the same iteration order, as plain Python.
+    """
+    kept = "_plx_run" if plan.nested else "_plx_v"
+    guard = f" if {kept} is not _lucen_rt.SKIP" if plan.filtered else ""
+    if plan.nested:
+        rows = f"[_plx_v for {kept} in {plan.target}{guard} for _plx_v in {kept}]"
+    elif plan.filtered:
+        rows = f"[{kept} for {kept} in {plan.target}{guard}]"
+    else:
+        rows = plan.target
+    if plan.kind == "set":
+        rows = f"set({rows})"
+    elif plan.kind == "dict":
+        rows = f"dict({rows})"
+    if rows == plan.target:
+        return []
+    return [f"{indent}{plan.target} = {rows}"]

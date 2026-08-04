@@ -10,9 +10,22 @@ ignore.
 
 | Pragma | Placement | Purpose |
 |---|---|---|
-| `# LUCEN START [clauses]` | Immediately above a `for` loop | Opens a marked block and carries the tuning and assertion clauses |
-| `# LUCEN END` | Immediately below the same loop | Closes the marked block |
+| `# LUCEN START [clauses]` | Immediately above a `for` loop or a comprehension assignment | Opens a marked block and carries the tuning and assertion clauses |
+| `# LUCEN END` | Immediately below the same construct | Closes the marked block |
 | `# LUCEN TRUST [clauses]` | Immediately above a `def` | Asserts a helper is safe to run under parallelism |
+
+A marked comprehension is parallelized over its outermost iterable and rebuilt
+from ordered slots, so its result, including dict and set iteration order, is
+the one plain Python produces:
+
+```python
+# LUCEN START
+scores = [score(r) for r in records]
+# LUCEN END
+```
+
+List, dict, and set comprehensions are supported, with filters and with further
+`for` clauses. A generator expression is lazy and is never parallelized.
 
 The pragmas are ordinary comments. A file with Lucen not activated runs
 exactly as if they were absent. Clauses are comma-separated on the pragma line,

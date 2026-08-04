@@ -296,13 +296,20 @@ current feature. See [ROADMAP.md](ROADMAP.md).
 
 What Lucen does not attempt. These are boundaries of the design, not defects.
 
-### 4.1 One block per pragma pair, one loop per block
+### 4.1 One block per pragma pair, one construct per block
 
-A `# LUCEN START` / `# LUCEN END` pair marks exactly one `for` loop. The
-body may contain arbitrarily nested control flow, but the marked construct
-itself is a single `for` loop over a sized iterable. A marked `while` has no
-iteration space to chunk and runs as unmodified Python. `async` loop bodies are
-out of scope.
+A `# LUCEN START` / `# LUCEN END` pair marks exactly one `for` loop, or one
+assignment of a list, dict, or set comprehension. The body may contain
+arbitrarily nested control flow, but the marked construct itself is a single
+loop or comprehension over a sized iterable. A marked `while` has no iteration
+space to chunk and runs as unmodified Python. `async` loop bodies and `async`
+comprehensions are out of scope.
+
+A generator expression is never parallelized. It is lazy: nothing is computed
+where it is written, so producing its elements at the marked line would change
+when the work happens, force the whole result into memory, and diverge outright
+if the consumer takes only a prefix or mutates the source first. A marked
+generator expression runs as unmodified Python.
 
 ### 4.2 Sized iterables only
 
