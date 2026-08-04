@@ -155,11 +155,14 @@ jobs:
         uses: sigstore/gh-action-sigstore-python@v3.0.0
         with:
           inputs: ./dist/*.whl ./dist/*.tar.gz
+      # Notes come from the CHANGELOG, not the tag message: actions/checkout
+      # points refs/tags/<tag> straight at the commit, so the annotation is not
+      # present in the runner and %(contents) would yield the commit subject.
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)' > release-notes.md
+          python tools/release_notes.py "${GITHUB_REF_NAME}" > release-notes.md
           gh release create "${GITHUB_REF_NAME}" ./dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
