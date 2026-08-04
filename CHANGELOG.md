@@ -4,6 +4,17 @@ All notable changes to Lucen are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Marked list, dict, and set comprehensions are parallelized, including filters
+  and further `for` clauses. Each form builds one positional list over the
+  outermost iterable and is rebuilt sequentially afterwards, so results,
+  including dict and set iteration order, match plain Python exactly.
+- `total = sum(elt for t in it)` is parallelized through the ordered reduction
+  fold. A bare generator expression is lazy and is never parallelized.
+
 ## [1.1.1] - 2026-08-04
 
 ### Fixed

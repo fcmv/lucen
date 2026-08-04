@@ -25,7 +25,9 @@ scores = [score(r) for r in records]
 ```
 
 List, dict, and set comprehensions are supported, with filters and with further
-`for` clauses. A generator expression is lazy and is never parallelized.
+`for` clauses. A bare generator expression is lazy and is never parallelized;
+`total = sum(elt for t in it)` is supported, because `sum` drains the generator
+at that line, and runs through the ordered reduction fold.
 
 The pragmas are ordinary comments. A file with Lucen not activated runs
 exactly as if they were absent. Clauses are comma-separated on the pragma line,

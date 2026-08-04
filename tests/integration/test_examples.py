@@ -103,8 +103,15 @@ def main():
     # LUCEN START
     g = {key(x): f(x) for x in xs if keep(x)}
     # LUCEN END
+    # LUCEN START
+    h = sum(f(x) for x in xs)
+    # LUCEN END
+    # LUCEN START
+    i = sum((f(x) for x in xs if keep(x)), 5.25)
+    # LUCEN END
     print("checksum:", len(a), len(b), len(c), len(d), len(e), len(g))
     print("order:", list(c)[:4], list(g)[:4], sorted(d)[:2])
+    print("reduced:", repr(h), repr(i))
     print("sums:", "%.10f" % sum(a), "%.10f" % sum(b), sum(e))
     print("leaked:", [n for n in ("x", "y") if n in dir()])
 

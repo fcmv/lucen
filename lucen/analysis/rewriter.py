@@ -298,9 +298,61 @@ class ComprehensionPlan:
     kind: str
     filtered: bool
     nested: bool
+    init: Optional[str] = None
 
 
 _COMPREHENSION_KINDS = {ast.ListComp: "list", ast.SetComp: "set", ast.DictComp: "dict"}
+
+
+def _sum_reduction(
+    stmt: ast.Assign, target: ast.Name
+) -> Optional[Tuple[ast.For, ComprehensionPlan]]:
+    """Desugar `total = sum(elt for t in it)` into an accumulating loop.
+
+    `sum` drains the generator here, so accumulating in place is equivalent.
+    Further `for` clauses are refused: subtotals would regroup the additions.
+    """
+    call = stmt.value
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+        return None
+    if call.func.id != "sum" or call.keywords or not 1 <= len(call.args) <= 2:
+        return None
+    gen = call.args[0]
+    if not isinstance(gen, ast.GeneratorExp) or len(gen.generators) != 1:
+        return None
+    outer = gen.generators[0]
+    if getattr(outer, "is_async", 0):
+        return None
+
+    body: List[ast.stmt] = [
+        ast.AugAssign(target=ast.Name(id=target.id, ctx=ast.Store()), op=ast.Add(), value=gen.elt)
+    ]
+    if outer.ifs:
+        test = outer.ifs[0]
+        for extra in outer.ifs[1:]:
+            test = ast.BoolOp(op=ast.And(), values=[test, extra])
+        body = [ast.If(test=test, body=body, orelse=[])]
+
+    loop = ast.For(
+        target=ast.Tuple(
+            elts=[ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Store()), outer.target], ctx=ast.Store()
+        ),
+        iter=ast.Call(
+            func=ast.Name(id="enumerate", ctx=ast.Load()), args=[outer.iter], keywords=[]
+        ),
+        body=body,
+        orelse=[],
+    )
+    ast.copy_location(loop, stmt)
+    ast.fix_missing_locations(loop)
+    plan = ComprehensionPlan(
+        target=target.id,
+        kind="reduce",
+        filtered=bool(outer.ifs),
+        nested=False,
+        init=ast.unparse(call.args[1]) if len(call.args) == 2 else "0",
+    )
+    return loop, plan
 
 
 def _comprehension_loop(stmt: ast.stmt) -> Optional[Tuple[ast.For, ComprehensionPlan]]:
@@ -313,8 +365,13 @@ def _comprehension_loop(stmt: ast.stmt) -> Optional[Tuple[ast.For, Comprehension
         return None
     target = stmt.targets[0]
     value = stmt.value
+    if not isinstance(target, ast.Name):
+        return None
+    reduction = _sum_reduction(stmt, target)
+    if reduction is not None:
+        return reduction
     kind = _COMPREHENSION_KINDS.get(type(value))
-    if not isinstance(target, ast.Name) or kind is None:
+    if kind is None:
         return None
     generators = value.generators
     if any(getattr(gen, "is_async", 0) for gen in generators):

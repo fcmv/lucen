@@ -206,7 +206,9 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
     result = f"_plx_r_{spec.line}"
     plan = analysis.comprehension
     prologue: List[str] = []
-    if plan is not None:
+    if plan is not None and plan.kind == "reduce":
+        prologue = [f"{indent}{plan.target} = {plan.init}"]
+    elif plan is not None:
         # Size the result before dispatch, from a single materialization: the
         # source may be a one-shot iterator, and reading it twice (once to size,
         # once to iterate) would consume it. Unwritten slots keep the sentinel so
@@ -226,7 +228,18 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
     ]
     if plan is not None:
         # Comprehension targets do not leak in Python 3, so the loop variables
-        # are deliberately not rebound.
+        # are deliberately not rebound; a reduction still has to collect its
+        # accumulator, which follows those targets in the result tuple.
+        if plan.kind == "reduce":
+            slot = len(artifact.loop_targets)
+            return (
+                prologue
+                + call
+                + [
+                    f"{indent}if {result} is not None:",
+                    f"{indent}    {plan.target} = {result}[{slot}]",
+                ]
+            )
         return prologue + call + _comprehension_epilogue(plan, indent)
     rebind = ", ".join(
         artifact.loop_targets + [r.scalar for r in artifact.reductions if "." not in r.scalar]

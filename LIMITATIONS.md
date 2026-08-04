@@ -305,11 +305,18 @@ loop or comprehension over a sized iterable. A marked `while` has no iteration
 space to chunk and runs as unmodified Python. `async` loop bodies and `async`
 comprehensions are out of scope.
 
-A generator expression is never parallelized. It is lazy: nothing is computed
-where it is written, so producing its elements at the marked line would change
-when the work happens, force the whole result into memory, and diverge outright
-if the consumer takes only a prefix or mutates the source first. A marked
-generator expression runs as unmodified Python.
+A bare generator expression is never parallelized. It is lazy: nothing is
+computed where it is written, so producing its elements at the marked line would
+change when the work happens, force the whole result into memory, and diverge
+outright if the consumer takes only a prefix or mutates the source first. A
+marked generator expression runs as unmodified Python.
+
+`total = sum(elt for t in it)` is the exception, because `sum` provably drains
+the generator at that line and keeps none of it: accumulating in place computes
+the same elements the same number of times. It runs through the ordered
+reduction fold, so the addition order, and therefore the floating point result,
+matches sequential execution. Further `for` clauses are refused there, since
+summing per-row subtotals would regroup the additions.
 
 ### 4.2 Sized iterables only
 

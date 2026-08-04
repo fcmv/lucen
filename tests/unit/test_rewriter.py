@@ -413,3 +413,32 @@ def test_generator_expression_is_declined():
     a = analyze_one(src)
     assert not a.ok
     assert a.fallbacks[0].error == "IllegalSyntaxInBlockError"
+
+
+SUM_FORMS = [
+    ("total = sum(f(r) for r in rs)", "0", False),
+    ("total = sum(f(r) for r in rs if c(r))", "0", True),
+    ("total = sum((f(r) for r in rs), 10)", "10", False),
+]
+
+
+@pytest.mark.parametrize("line,init,filtered", SUM_FORMS)
+def test_sum_over_a_generator_becomes_a_reduction(line, init, filtered):
+    # sum drains the generator here, so accumulating in place computes the same
+    # elements; the ordered fold keeps the addition order.
+    src = f"# LUCEN START\n{line}\n# LUCEN END\n"
+    a = analyze_one(src)
+    assert a.ok
+    assert (a.comprehension.kind, a.comprehension.init) == ("reduce", init)
+    assert a.comprehension.filtered is filtered
+    assert a.targets["total"].classification is Classification.SHARED_SCALAR
+    assert a.targets["total"].reduce_op == "+"
+
+
+def test_nested_sum_over_a_generator_is_declined():
+    # Summing per-row subtotals regroups the additions, which does not
+    # reproduce the sequential floating point result.
+    src = "# LUCEN START\ntotal = sum(f(a, b) for a in rs for b in ys)\n# LUCEN END\n"
+    a = analyze_one(src)
+    assert not a.ok
+    assert a.fallbacks[0].error == "IllegalSyntaxInBlockError"
