@@ -203,14 +203,31 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
         iter_src = ast.unparse(for_node.iter.args[0])
     else:
         iter_src = ast.unparse(for_node.iter)
+    result = f"_plx_r_{spec.line}"
+    prologue: List[str] = []
+    if analysis.comprehension is not None:
+        # Size the result before dispatch, from a single materialization: the
+        # source may be a one-shot iterator, and reading it twice (once to size,
+        # once to iterate) would consume it. Comprehension targets do not leak
+        # in Python 3, so the loop variables are deliberately not rebound below.
+        source = f"_plx_src_{spec.line}"
+        prologue = [
+            f"{indent}{source} = {iter_src} if isinstance({iter_src}, (list, tuple)) "
+            f"else list({iter_src})",
+            f"{indent}{analysis.comprehension.target} = [None] * len({source})",
+        ]
+        iter_src = source
     env_items = ", ".join(f"{name!r}: {name}" for name in spec.arg_names)
+    call = [
+        f"{indent}{result} = _lucen_rt.execute(_PLX_SPEC_{spec.line}, "
+        f"{iter_src}, {{{env_items}}}, globals())",
+    ]
+    if analysis.comprehension is not None:
+        return prologue + call
     rebind = ", ".join(
         artifact.loop_targets + [r.scalar for r in artifact.reductions if "." not in r.scalar]
     )
-    result = f"_plx_r_{spec.line}"
-    return [
-        f"{indent}{result} = _lucen_rt.execute(_PLX_SPEC_{spec.line}, "
-        f"{iter_src}, {{{env_items}}}, globals())",
+    return call + [
         f"{indent}if {result} is not None:",
         f"{indent}    ({rebind},) = {result}",
     ]

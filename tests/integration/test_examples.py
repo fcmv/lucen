@@ -38,6 +38,46 @@ def test_lucen_run_reports_the_script_as_the_entry_module(tmp_path):
     assert done.stdout.strip() == str(script)
 
 
+COMPREHENSION_SCRIPT = """
+import math
+
+
+def score(x):
+    acc = 0.0
+    for k in range(200):
+        acc += math.sin(x * 0.001 + k) * math.cos(k * 0.5)
+    return acc
+
+
+def main():
+    records = list(range(3000))
+    # LUCEN START
+    scores = [score(r) for r in records]
+    # LUCEN END
+    print(f"checksum: {sum(scores):.10f}")
+    print(f"leaked: {'r' in dir()}")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def test_list_comprehension_is_bit_identical(tmp_path):
+    # A comprehension desugars to an indexed loop, so the result must match
+    # plain Python exactly and the comprehension variable must not leak.
+    script = tmp_path / "comp.py"
+    script.write_text(COMPREHENSION_SCRIPT, encoding="utf-8")
+    plain = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    lucen = subprocess.run(
+        [sys.executable, "-m", "lucen", "run", str(script)], capture_output=True, text=True
+    )
+    assert plain.returncode == 0, plain.stderr
+    assert lucen.returncode == 0, lucen.stderr
+    assert _result_line(lucen.stdout) == _result_line(plain.stdout)
+    assert "leaked: False" in lucen.stdout
+
+
 @pytest.mark.parametrize("path", EXAMPLES, ids=lambda p: p.name)
 def test_example_runs_and_is_bit_identical(path):
     plain = _run(path, activate=False)

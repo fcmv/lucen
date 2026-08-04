@@ -67,6 +67,7 @@ class BlockAnalysis:
     called_paths: FrozenSet[str] = frozenset()
     trusted_names: FrozenSet[str] = frozenset()
     branch_sensitive: bool = False
+    comprehension: Optional["ComprehensionPlan"] = None
     fallbacks: List[FallbackRecord] = field(default_factory=list)
 
     @property
@@ -179,10 +180,19 @@ def _analyze_into(
     inside = [s for s in statements if s.lineno > lo and (s.end_lineno or s.lineno) < hi]
     inside_ids = {id(s) for s in inside}
     top = [s for s in inside if not _has_ancestor_in(s, parents, inside_ids)]
+    comprehension = None
+    if len(top) == 1 and not isinstance(top[0], ast.For):
+        desugared = _comprehension_loop(top[0])
+        if desugared is not None:
+            top = [desugared[0]]
+            comprehension = desugared[1]
     if len(top) != 1 or not isinstance(top[0], ast.For):
         raise IllegalSyntaxInBlockError(
-            "a marked block must contain exactly one for loop", file=filename, line=lo
+            "a marked block must contain exactly one for loop or list comprehension",
+            file=filename,
+            line=lo,
         )
+    analysis.comprehension = comprehension
     for_node = top[0]
     if for_node.orelse:
         raise IllegalSyntaxInBlockError(
@@ -270,6 +280,59 @@ def _target_names(node: ast.AST) -> List[str]:
 # Codegen drives these headers itself (sliced index ranges, re-paired enumerate)
 # rather than calling them, so the domain only holds if the names are the builtins.
 DOMAIN_BUILTINS = frozenset({"range", "enumerate"})
+
+# Synthesized index for a desugared comprehension. Comprehension variables do
+# not leak in Python 3, so the rewrite must not rebind this afterwards.
+COMPREHENSION_INDEX = "_plx_ci"
+
+
+@dataclass
+class ComprehensionPlan:
+    """A marked comprehension rewritten as an equivalent indexed loop."""
+
+    target: str
+    iter_source: str
+
+
+def _comprehension_loop(stmt: ast.stmt) -> Optional[Tuple[ast.For, ComprehensionPlan]]:
+    """Desugar `out = [elt for t in it]` into an equivalent positional loop.
+
+    A real `for` node inherits the existing analysis and commit path unchanged.
+    Only the unfiltered single-generator list form is desugared here.
+    """
+    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+        return None
+    target = stmt.targets[0]
+    value = stmt.value
+    if not isinstance(target, ast.Name) or not isinstance(value, ast.ListComp):
+        return None
+    if len(value.generators) != 1:
+        return None
+    gen = value.generators[0]
+    if gen.ifs or getattr(gen, "is_async", 0):
+        return None
+
+    index = ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Store())
+    loop = ast.For(
+        target=ast.Tuple(elts=[index, gen.target], ctx=ast.Store()),
+        iter=ast.Call(func=ast.Name(id="enumerate", ctx=ast.Load()), args=[gen.iter], keywords=[]),
+        body=[
+            ast.Assign(
+                targets=[
+                    ast.Subscript(
+                        value=ast.Name(id=target.id, ctx=ast.Load()),
+                        slice=ast.Name(id=COMPREHENSION_INDEX, ctx=ast.Load()),
+                        ctx=ast.Store(),
+                    )
+                ],
+                value=value.elt,
+            )
+        ],
+        orelse=[],
+    )
+    ast.copy_location(loop, stmt)
+    ast.fix_missing_locations(loop)
+    return loop, ComprehensionPlan(target=target.id, iter_source=ast.unparse(gen.iter))
 
 
 def shadowed_builtins(tree: ast.AST) -> FrozenSet[str]:

@@ -381,3 +381,29 @@ def test_inner_loop_break_is_not_outer_early_exit():
     )
     assert a.ok
     assert not a.has_break
+
+
+COMPREHENSIONS_DECLINED = [
+    "out = [f(r) for r in rs if c(r)]",
+    "out = [f(a, b) for a in rs for b in ys]",
+    "out = {k(r): f(r) for r in rs}",
+    "out = {f(r) for r in rs}",
+    "out = (f(r) for r in rs)",
+]
+
+
+def test_list_comprehension_desugars_to_an_indexed_loop():
+    src = "# LUCEN START\nout = [score(r) for r in records]\n# LUCEN END\n"
+    a = analyze_one(src)
+    assert a.ok
+    assert a.comprehension.target == "out"
+    assert a.targets["out"].classification is Classification.SHARED_INDEXED_SAFE
+    assert a.targets["out"].audit_tier is AuditTier.BY_PROOF
+
+
+@pytest.mark.parametrize("line", COMPREHENSIONS_DECLINED)
+def test_unsupported_comprehension_forms_are_declined(line):
+    src = f"# LUCEN START\n{line}\n# LUCEN END\n"
+    a = analyze_one(src)
+    assert not a.ok
+    assert a.fallbacks[0].error == "IllegalSyntaxInBlockError"
