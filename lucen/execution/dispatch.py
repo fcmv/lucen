@@ -178,6 +178,7 @@ def _zero_stats(runs: int) -> Dict[str, Any]:
         "probe_ns": None,
         "duration_ns": 0,
         "fallback_runs": 0,
+        "interrupted_runs": 0,
     }
 
 
@@ -185,7 +186,15 @@ def _fresh_stats() -> Dict[str, Any]:
     return _zero_stats(runs=1)
 
 
-_STATS_SUMS = ("runs", "parallel_runs", "sequential_runs", "chunks", "fallback_runs", "duration_ns")
+_STATS_SUMS = (
+    "runs",
+    "parallel_runs",
+    "sequential_runs",
+    "chunks",
+    "fallback_runs",
+    "interrupted_runs",
+    "duration_ns",
+)
 
 
 # accumulate locally, merge once under the lock: concurrent same-block runs
@@ -441,7 +450,13 @@ def _run_chunk_set(
 
     futures = [pool.submit(job, idx, a, b) for idx, (a, b) in enumerate(bounds, start=1)]
     timeout_s = max(0.0, deadline - time.monotonic()) if deadline is not None else None
-    done, not_done = wait(futures, timeout=timeout_s, return_when=FIRST_EXCEPTION)
+    try:
+        done, not_done = wait(futures, timeout=timeout_s, return_when=FIRST_EXCEPTION)
+    except BaseException:
+        # Only the completed prefix is committed: an interrupted sequential run
+        # leaves a prefix, never a scattered subset of the iterations.
+        _abandon(spec, plan, futures, env, module_globals, gate, stats)
+        raise
 
     # return_when=FIRST_EXCEPTION returns early only on a raise or all-complete;
     # a non-empty not_done with nothing raised therefore means the wait elapsed,
@@ -628,10 +643,18 @@ def _run_buffer_direct(
     if work and work[0][0] < start:
         work[0] = (start, work[0][1])
     futures = [pool.submit(job, a, b) for a, b in work]
-    for fut in futures:
-        exc = fut.exception()
-        if exc is not None:
-            raise exc
+    try:
+        for fut in futures:
+            exc = fut.exception()
+            if exc is not None:
+                raise exc
+    except BaseException:
+        # This path writes straight into the caller's containers, so there is no
+        # slab to withhold; draining is what stops a worker writing into them
+        # after the interrupt has unwound the caller.
+        _drain(futures)
+        stats["interrupted_runs"] += 1
+        raise
     stats["parallel_runs"] += 1
     stats["chunks"] += len(work)
     return _rebind(spec, plan, env, module_globals)
@@ -856,6 +879,31 @@ def _calibrate_mode(spec) -> str:
     if cv.kind == "name":
         return cv.value
     return "auto"
+
+
+def _drain(futures) -> list:
+    """Cancel what has not started and let running chunks finish.
+
+    Unwinding with workers still live leaves them writing into caller containers.
+    """
+    for fut in futures:
+        fut.cancel()
+    live = [f for f in futures if not f.cancelled()]
+    if live:
+        wait(live)
+    return live
+
+
+def _abandon(spec, plan, futures, env, module_globals, gate, stats) -> None:
+    """Tear down an interrupted parallel run and commit what legitimately ran."""
+    live = _drain(futures)
+    records = sorted(
+        (_record_of(f) for f in live if f.done() and f.exception() is None), key=lambda r: r.idx
+    )
+    prefix = _contiguous_prefix(records)
+    if prefix:
+        _commit_records(spec, plan, prefix, env, module_globals, gate)
+    stats["interrupted_runs"] += 1
 
 
 def _contiguous_prefix(records: List[_Record]) -> List[_Record]:

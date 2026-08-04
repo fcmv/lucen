@@ -71,6 +71,45 @@ def block(body_lines, header="for i in range(1, n):", clauses=""):
     return f"# LUCEN START{suffix}\n{header}\n{body}\n# LUCEN END\n"
 
 
+def test_interrupt_drains_workers_before_unwinding():
+    # An interrupt in the collecting thread must not leave chunks running: they
+    # would keep writing into the caller's containers after the exception has
+    # been handled. Every future is settled by the time it propagates.
+    import concurrent.futures as cf
+
+    started, finished = [], []
+
+    def slow(v):
+        started.append(v)
+        time.sleep(0.01)
+        finished.append(v)
+        return v * 2
+
+    src = block(
+        ["ys[i] = slow(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4), trust=callables",
+    )
+    env = {"xs": list(range(40)), "ys": [0] * 40, "slow": slow}
+    original, calls = cf.Future.exception, []
+
+    def interrupting(self, timeout=None):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return original(self, timeout=timeout)
+
+    cf.Future.exception = interrupting
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run(src, env)
+    finally:
+        cf.Future.exception = original
+    assert len(started) == len(finished), "a chunk was still running after the interrupt"
+    stats = list(dispatch.get_block_stats().values())[-1]
+    assert stats["interrupted_runs"] == 1
+
+
 def test_thread_map_equivalence():
     src = block(
         ["ys[i] = xs[i] * 3 + 1"], header="for i in range(len(xs)):", clauses="calibrate=false"
