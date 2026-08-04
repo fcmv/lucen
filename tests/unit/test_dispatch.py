@@ -71,6 +71,35 @@ def block(body_lines, header="for i in range(1, n):", clauses=""):
     return f"# LUCEN START{suffix}\n{header}\n{body}\n# LUCEN END\n"
 
 
+def test_worker_exhaustion_falls_back_instead_of_crashing():
+    # A pool hands out workers lazily, so a thread ceiling surfaces as a failed
+    # submit partway through dispatch. That must degrade to a reported
+    # sequential run, not surface as a crash in the middle of the loop.
+    src = block(
+        ["ys[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    env = {"xs": list(range(40)), "ys": [0] * 40}
+    pool = dispatch._ensure_pool(4)
+    original, calls = pool.submit, []
+
+    def exhausted(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 2:
+            raise RuntimeError("can't start new thread")
+        return original(*args, **kwargs)
+
+    pool.submit = exhausted
+    try:
+        got, _, spec = run(src, env)
+    finally:
+        pool.submit = original
+    assert got["ys"] == [v * 2 for v in range(40)]
+    assert any(r.error == "PreflightCheckError" for r in get_fallback_report())
+    assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
+
+
 def test_interrupt_drains_workers_before_unwinding():
     # An interrupt in the collecting thread must not leave chunks running: they
     # would keep writing into the caller's containers after the exception has

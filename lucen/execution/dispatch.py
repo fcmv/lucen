@@ -340,19 +340,26 @@ def _execute(spec, iterable, env, module_globals, force_backend, stats):
         and backend == "thread"
         and _direct_write_ready(spec, env, module_globals)
     ):
-        return _run_buffer_direct(
-            spec,
-            plan,
-            env,
-            module_globals,
-            gate,
-            workers,
-            deadline,
-            stats,
-            probe_record,
-            bounds,
-            probed_end,
-        )
+        try:
+            return _run_buffer_direct(
+                spec,
+                plan,
+                env,
+                module_globals,
+                gate,
+                workers,
+                deadline,
+                stats,
+                probe_record,
+                bounds,
+                probed_end,
+            )
+        except PreflightCheckError as exc:
+            # No workers: the direct path writes proven-disjoint, index-aligned
+            # slots, so replaying the range sequentially rewrites the same values.
+            raise_or_fallback(exc)
+            stats["fallback_runs"] += 1
+            return _run_twin(spec, plan, env, module_globals, stats, start=probed_end)
 
     rest = bounds[1:] if probed_end else bounds
     try:
@@ -448,7 +455,7 @@ def _run_chunk_set(
             raise _ChunkFailure(record)
         return record
 
-    futures = [pool.submit(job, idx, a, b) for idx, (a, b) in enumerate(bounds, start=1)]
+    futures = _submit_all(pool, job, list(enumerate(bounds, start=1)), spec)
     timeout_s = max(0.0, deadline - time.monotonic()) if deadline is not None else None
     try:
         done, not_done = wait(futures, timeout=timeout_s, return_when=FIRST_EXCEPTION)
@@ -642,7 +649,7 @@ def _run_buffer_direct(
     work = [(a, b) for a, b in bounds if b > start]
     if work and work[0][0] < start:
         work[0] = (start, work[0][1])
-    futures = [pool.submit(job, a, b) for a, b in work]
+    futures = _submit_all(pool, lambda _idx, a, b: job(a, b), list(enumerate(work, start=1)), spec)
     try:
         for fut in futures:
             exc = fut.exception()
@@ -879,6 +886,27 @@ def _calibrate_mode(spec) -> str:
     if cv.kind == "name":
         return cv.value
     return "auto"
+
+
+def _submit_all(pool, job, items, spec) -> list:
+    """Submit every chunk, surfacing worker exhaustion before any chunk runs.
+
+    Pools hand out workers lazily, so a thread ceiling shows up as a failed
+    submit partway in; refusing the whole attempt keeps the caller sequential.
+    """
+    futures: list = []
+    try:
+        for idx, (a, b) in items:
+            futures.append(pool.submit(job, idx, a, b))
+    except (RuntimeError, OSError) as exc:
+        _drain(futures)
+        raise PreflightCheckError(
+            f"could not start a worker for every chunk ({type(exc).__name__}: {exc}); "
+            "ran SEQUENTIAL",
+            file=spec.filename,
+            line=spec.line,
+        ) from exc
+    return futures
 
 
 def _drain(futures) -> list:
