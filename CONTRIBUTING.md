@@ -10,7 +10,7 @@ how to get a change merged.
 Before contributing code, please also read:
 
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), which governs all project spaces.
-- [AI_USAGE.md](AI_USAGE.md), the policy for AI-assisted contributions.
+- [AI_USAGE_GUIDELINE_FOR_PR.md](AI_USAGE_GUIDELINE_FOR_PR.md), the policy for AI-assisted contributions.
 - The [engineering guide](docs/implementation/lucen_engineering_doc.md),
   which maps the codebase, and the
   [technical specification](docs/spec/lucen_technical_spec.md), which is the
@@ -122,7 +122,7 @@ attention in review:
   the *what*. A message for a pipeline change should name the invariant or the
   benchmark it affects.
 - Do not add tooling attribution trailers to commits (see
-  [AI_USAGE.md](AI_USAGE.md) for the AI-assistance policy).
+  [AI_USAGE_GUIDELINE_FOR_PR.md](AI_USAGE_GUIDELINE_FOR_PR.md) for the AI-assistance policy).
 - Open an issue first for anything nontrivial, so the approach can be discussed
   before you invest in it. Small fixes can go straight to a pull request.
 - A pull request should describe what changed, how it was verified (which of
