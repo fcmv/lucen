@@ -39,3 +39,6 @@ site/
 # Mutation testing
 .mutmut-cache
 mutants/
+mutation-survivors.txt
+# mutmut edits in place and leaves these next to the file it mutated
+*.py.bak
