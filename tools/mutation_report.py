@@ -34,9 +34,6 @@ CORE = [
     "lucen/codegen/generator.py",
 ]
 
-FULL_RUNNER = "python -m pytest -x -q -p no:cacheprovider tests/unit tests/property"
-QUICK_RUNNER = "python -m pytest -x -q -p no:cacheprovider tests/unit"
-
 
 def _capture(cmd: "list[str]", cwd: Path, env: "dict[str, str] | None" = None) -> str:
     """Read a child's output as utf-8; the locale codec cannot decode mutmut."""
@@ -114,23 +111,49 @@ def parse_survivors(text: str) -> "list[str]":
     return ids
 
 
+def run_suite(quick: bool) -> int:
+    """Run the suite once per accel mode, for use as mutmut's runner.
+
+    Pinning a single mode makes the other one dead code: with the native core
+    active the pure-Python fallback never executes, and with it disabled every
+    `_accel.ACCELERATED` branch is unreachable. Either way mutations in the
+    unused half cannot be killed and report as false survivors.
+    """
+    targets = ["tests/unit"] if quick else ["tests/unit", "tests/property"]
+    for disable_native in (False, True):
+        env = dict(os.environ)
+        env.pop("LUCEN_DISABLE_NATIVE", None)
+        if disable_native:
+            env["LUCEN_DISABLE_NATIVE"] = "1"
+        done = subprocess.run(
+            [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *targets],
+            env=env,
+        )
+        if done.returncode != 0:
+            return done.returncode
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--paths", nargs="*", default=CORE, help="files to mutate")
     ap.add_argument("--quick", action="store_true", help="unit tests only")
     ap.add_argument("--out", default="mutation-survivors.txt")
+    ap.add_argument("--run-suite", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    if args.run_suite:
+        return run_suite(args.quick)
 
     root = Path.cwd()
     preflight(root)
     atexit.register(restore, root)
 
     env = dict(os.environ)
-    # Mutating the pure-Python fallback is pointless while the Rust core answers
-    # first, and mutmut's own output is not cp1252-encodable on Windows.
-    env["LUCEN_DISABLE_NATIVE"] = "1"
+    # mutmut's own output is not cp1252-decodable on Windows.
     env["PYTHONIOENCODING"] = "utf-8"
-    runner = QUICK_RUNNER if args.quick else FULL_RUNNER
+    quick = " --quick" if args.quick else ""
+    runner = f"{sys.executable} tools/mutation_report.py --run-suite{quick}"
 
     print(f"mutating {len(args.paths)} file(s); runner: {runner}")
     print("this takes a while: each mutant runs the suite once\n")

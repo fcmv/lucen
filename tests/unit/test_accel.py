@@ -5,7 +5,13 @@ import random
 import pytest
 
 from lucen.execution import _accel
-from lucen.execution.runtime import SKIP, fold_contributions
+from lucen.execution.runtime import (
+    SKIP,
+    assign_path,
+    commit_list_slab,
+    fold_contributions,
+    resolve_path,
+)
 
 
 def py_bitmap_audit(chunk_lists, length):
@@ -193,3 +199,55 @@ def test_fold_ordered_unhandled_sentinel_for_custom_op():
 
     out = fold_contributions(None, [[1, 2, 3]], weird)
     assert out is None and calls == [1, 2, 3]
+
+
+def test_attribute_paths_deeper_than_two_components():
+    # assign_path walks parts[1:-1], which is empty for a two-component path,
+    # so nothing exercised the walk until here.
+    class Node:
+        pass
+
+    root, mid, leaf = Node(), Node(), Node()
+    root.mid = mid
+    mid.leaf = leaf
+    leaf.value = 1
+    env = {"root": root}
+
+    assert resolve_path(env, "root.mid.leaf.value") == 1
+    assign_path(env, "root.mid.leaf.value", 42)
+    assert leaf.value == 42
+    assign_path(env, "root.mid.leaf", "replaced")
+    assert mid.leaf == "replaced"
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_contiguous_audit_rejects_a_range_past_the_total(monkeypatch, native):
+    # stop > total and stop < start are independent failures; an `and` there
+    # would accept a chunk running off the end of the container. Both the
+    # native core and the fallback are checked, since whichever one is not
+    # loaded is dead code for the other pass.
+    if not native:
+        monkeypatch.setattr(_accel, "_native", None)
+    elif _accel._native is None:
+        pytest.skip("native core not loaded")
+    assert _accel.audit_contiguous([(0, 4), (4, 8)], 8) is None
+    # the offending chunk's own start is reported, not the runaway stop
+    assert _accel.audit_contiguous([(0, 4), (4, 12)], 8) == 4
+    assert _accel.audit_contiguous([(0, 4), (6, 8)], 8) == 4
+
+
+def test_list_commit_takes_the_slice_path_and_never_leaks_skip():
+    # The contiguous list fast path assigns the slab as a slice, so it must
+    # refuse a slab holding SKIP rather than writing the sentinel through.
+    container = [0, 0, 0, 0]
+    commit_list_slab(container, range(0, 4), [1, 2, 3, 4])
+    assert container == [1, 2, 3, 4]
+
+    holed = [9, 9, 9, 9]
+    commit_list_slab(holed, range(0, 4), [1, SKIP, 3, SKIP])
+    assert holed == [1, 9, 3, 9]
+    assert SKIP not in holed
+
+
+def test_fold_over_no_sites_returns_the_accumulator():
+    assert fold_contributions(7, [], "+") == 7
