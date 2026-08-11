@@ -53,6 +53,11 @@ the ones that assert something the runtime can check are still checked.
 | `affinity` | `compact` \| `scatter` \| `explicit(cores=[...][, numa_node=N])` | Requests CPU affinity for the workers. |
 | `nested` | `sequential` \| `shared_pool` \| `independent` | Policy for a marked block reached while another is already dispatching. |
 
+A `process` worker is a separate interpreter, so the pool costs one import graph
+per worker on a spawn platform. Size it for your imports rather than your core
+count; see
+[Limitations 2.6](https://github.com/fcmv/lucen/blob/main/LIMITATIONS.md#26-process-workers-multiply-the-memory-footprint).
+
 ### Correctness assertions (expert)
 
 These waive a compiler proof. They are the only clauses that can affect
@@ -80,6 +85,12 @@ check the assertion, it does.
 | `on_error` | `collect` \| `collect(max_errors=N)` \| `custom(handler=<callable>)` | Gathers per-iteration exceptions instead of failing fast; readable afterward with `lucen.get_collected_errors`. |
 | `strict` | `true` \| `false` \| `true(allow=[reason, ...])` | Turns this block's fallbacks into hard errors, optionally allowing named downgrade reasons. |
 | `on_fallback` | `hard` \| `quiet` \| `report` \| `<mode>(allow=[reason, ...])` \| `custom(handler=<callable>)` | Sets how a fallback is surfaced for this block. |
+
+An exception raised on the process backend, whether it propagates or is gathered
+by `on_error=collect`, is rebuilt from its pickled form in the parent: the
+traceback is not carried, and a type that cannot be reconstructed from its
+message alone degrades to `RuntimeError`. See
+[Limitations 2.5](https://github.com/fcmv/lucen/blob/main/LIMITATIONS.md#25-exception-type-can-degrade-across-the-process-boundary).
 
 ### Observability
 

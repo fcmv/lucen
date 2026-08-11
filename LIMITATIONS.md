@@ -205,6 +205,66 @@ value you need and act on it after the loop.
 bit-identical; what differs is the context and the parent-visible effect of
 destructor side effects, which the value contract does not cover.
 
+### 2.5 Exception type can degrade across the process boundary
+
+**What.** An exception raised in a loop body running on the process backend
+crosses a pickle boundary before it reaches you. The traceback never survives
+that crossing, because pickle does not carry `__traceback__`. In one narrow
+case the exception *type* does not survive either.
+
+**What Lucen does about it.** Each worker-side exception is round-trip tested.
+One that pickles is returned as itself, so the type, the message and the
+arguments arrive intact. One that does not is replaced by a proxy carrying its
+module, qualname and message, which the parent re-imports and rebuilds, so the
+original type is still what you catch in the ordinary case of a custom
+exception that takes a message.
+
+**Where it remains.** The rebuild calls the type with the message as its single
+argument. An exception whose constructor needs more than that, or refuses a
+plain string, cannot be reconstructed, and the parent raises `RuntimeError`
+carrying the original qualname and message in its text. Such a block raises
+`RuntimeError` under the process backend and its own exception type under
+sequential or `backend=thread`. `on_error=collect` gathers per-iteration
+exceptions through the same path, so collected errors degrade the same way.
+
+**What to do.** Keep exceptions that can escape a marked block picklable, which
+is already an expectation of any code that uses `multiprocessing`. Where the
+type matters and cannot be made picklable, pin the block with `backend=thread`,
+which raises the original exception object with its traceback intact.
+
+**Severity.** Low, and confined to the error path. The message survives in every
+case, the committed values are untouched, and the degradation is loud (a
+`RuntimeError` naming the original type) rather than silent.
+
+### 2.6 Process workers multiply the memory footprint
+
+**What.** A process worker is a separate interpreter holding its own copy of
+whatever the loop body reaches. On a spawn platform (Windows, and macOS by
+default) each worker re-imports the entry module and the module graph behind
+the body, so peak memory is roughly the parent's footprint plus one import
+graph per worker. On a fork platform the children start as copy-on-write images
+of the parent, which is far cheaper, though refcount updates dirty shared pages
+over time. Either way the growth arrives at the first process dispatch rather
+than accumulating, and the multiplier is the size of your imports, not the size
+of your data.
+
+**What Lucen does about it.** The pool is created once per process and reused
+across every block, so a program with twenty marked blocks pays for one set of
+workers. Argument bundles ship per chunk, and a container read only as `P[i]`
+ships as a slice rather than whole, so the per-chunk payload does not scale with
+the full input.
+
+**What to do.** Size the pool for your import graph rather than for your core
+count: `backend=process(pool_size=N)` on the block, `[defaults] pool_size` for
+the project, or `[limits] max_processes_per_block` as a ceiling no block can
+exceed. A body that is not helped by separate address spaces can take
+`backend=thread` and avoid the cost entirely, as can any block on a
+free-threaded build.
+
+**Severity.** Low to moderate, in proportion to how heavy your imports are. No
+effect on results; when it bites, it is memory pressure at the first dispatch on
+a many-core machine.
+
 ---
 
 ## 3. Performance gaps
