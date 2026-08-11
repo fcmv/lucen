@@ -114,10 +114,8 @@ def parse_survivors(text: str) -> "list[str]":
 def run_suite(quick: bool) -> int:
     """Run the suite once per accel mode, for use as mutmut's runner.
 
-    Pinning a single mode makes the other one dead code: with the native core
-    active the pure-Python fallback never executes, and with it disabled every
-    `_accel.ACCELERATED` branch is unreachable. Either way mutations in the
-    unused half cannot be killed and report as false survivors.
+    Pinning one mode makes the other dead code, so mutations in the unused half
+    cannot be killed and report as false survivors.
     """
     targets = ["tests/unit"] if quick else ["tests/unit", "tests/property"]
     for disable_native in (False, True):

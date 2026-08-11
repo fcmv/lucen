@@ -223,9 +223,8 @@ def test_attribute_paths_deeper_than_two_components():
 @pytest.mark.parametrize("native", [False, True])
 def test_contiguous_audit_rejects_a_range_past_the_total(monkeypatch, native):
     # stop > total and stop < start are independent failures; an `and` there
-    # would accept a chunk running off the end of the container. Both the
-    # native core and the fallback are checked, since whichever one is not
-    # loaded is dead code for the other pass.
+    # would accept a chunk running off the end. Both accel modes are checked
+    # because whichever is not loaded is dead code.
     if not native:
         monkeypatch.setattr(_accel, "_native", None)
     elif _accel._native is None:
