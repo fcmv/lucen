@@ -163,15 +163,56 @@ def test_reduction_bit_identity_and_rebind():
     assert result == (2999, g["total"])
 
 
-def test_probe_gates_tiny_block_and_stays_correct():
+def _fixed_probe(ns: float, seen: list):
+    """Report a fixed cost per iteration, but still run chunk 0.
+
+    The twin probe writes the first chunk into env and dispatch skips it
+    afterwards, so a stub that only returns a number would leave that chunk
+    unwritten and the block would commit a hole.
+    """
+    real = dispatch._probe_twin
+
+    def probe(spec, plan, first_bounds, env, module_globals):
+        real(spec, plan, first_bounds, env, module_globals)
+        seen.append(spec.key)
+        return ns
+
+    return probe
+
+
+def test_probe_gates_tiny_block_and_stays_correct(monkeypatch):
+    # What the gate decides is under test, not what the clock says. A real probe
+    # times one chunk once, a few dozen of these 300 iterations and so a few
+    # microseconds; one preemption on a shared runner inflates that past the
+    # threshold and the block routes parallel. Feeding the measurement keeps the
+    # routing, the report, and the commit real while the decision is fixed.
     src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):")
     env = {"xs": list(range(300)), "ys": [0] * 300}
+    probed: list = []
+    monkeypatch.setattr(dispatch, "_probe_twin", _fixed_probe(50.0, probed))
     p, _, spec = run(src, env)
+    assert probed, "twin probe was not the path taken; this test no longer covers the gate"
     assert p["ys"] == golden(src, env)["ys"]
     stats = dispatch.get_block_stats()[spec.key]
     assert stats["parallel_runs"] == 0
     assert stats["sequential_runs"] == 1
     assert any(r.error == "PARALLEL_UNPROFITABLE" for r in get_fallback_report())
+
+
+def test_probe_lets_an_expensive_block_through(monkeypatch):
+    # The profitable half of the same gate. Every other test that asserts a
+    # parallel run forces the backend with calibrate=false, which skips the
+    # gate, so nothing else covers the probe deciding to parallelize.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):")
+    env = {"xs": list(range(300)), "ys": [0] * 300}
+    probed: list = []
+    monkeypatch.setattr(dispatch, "_probe_twin", _fixed_probe(50_000.0, probed))
+    p, _, spec = run(src, env)
+    assert probed
+    assert p["ys"] == golden(src, env)["ys"]
+    stats = dispatch.get_block_stats()[spec.key]
+    assert stats["parallel_runs"] == 1
+    assert not any(r.error == "PARALLEL_UNPROFITABLE" for r in get_fallback_report())
 
 
 def test_calibration_memo_reused():
