@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import builtins
 import copy
 import math
+import os.path
+import random
+import sys
 
 import pytest
 
@@ -77,19 +81,19 @@ def block(body, clauses="calibrate=false"):
 def test_classifier_proves_module_state_mutation():
     verdict, reason = purity.classify(stateful_tick)
     assert verdict == purity.IMPURE
-    assert "_counter" in reason
+    assert reason == "writes shared state rooted at '_counter'"
 
 
 def test_classifier_proves_mutating_method_on_global():
     verdict, reason = purity.classify(side_effect_note)
     assert verdict == purity.IMPURE
-    assert "_log" in reason
+    assert reason == "mutates '_log' via .append()"
 
 
 def test_classifier_propagates_through_call_chain():
     verdict, reason = purity.classify(calls_stateful)
     assert verdict == purity.IMPURE
-    assert "stateful_tick" in reason
+    assert reason.startswith("calls 'stateful_tick' which ")
 
 
 def test_classifier_trusts_pure_and_c_level():
@@ -191,9 +195,177 @@ def test_toml_trust_callables_restores_parallel(tmp_path):
     assert dispatch.get_block_stats()[spec.key]["backend"] == "process"
 
 
-def test_random_in_body_runs_sequential_seeded_exact():
-    import random
+_chain_state: list = []
 
+
+def _chain_leaf(x):
+    _chain_state.append(x)
+    return x
+
+
+def _chain_3(x):
+    return _chain_leaf(x)
+
+
+def _chain_2(x):
+    return _chain_3(x)
+
+
+def _chain_1(x):
+    return _chain_2(x)
+
+
+def _local_accumulator(x):
+    bucket = []
+    bucket.append(x)
+    return len(bucket)
+
+
+def _calls_module_random(x):
+    return random.randint(0, x)
+
+
+def _calls_nested_attribute(x):
+    return os.path.join("a", str(x))
+
+
+_TABLE = [abs]
+
+
+def _calls_through_a_table(x):
+    return _TABLE[0](x)
+
+
+_self_module = sys.modules[__name__]
+
+
+def _calls_chain_via_module_attribute(x):
+    return _self_module._chain_3(x)
+
+
+def _calls_deep_chain_via_module_attribute(x):
+    return _self_module._chain_1(x)
+
+
+def _declares_globals(x):
+    global _counter_a, _counter_b
+    _counter_a = x
+    _counter_b = x
+    return x
+
+
+def _outer_declares_nonlocal(x):
+    seen = 0
+
+    def inner():
+        nonlocal seen
+        seen += 1
+
+    inner()
+    return seen
+
+
+def _function_without_source():
+    ns: dict = {}
+    exec("def hidden(v):\n    return v + 1\n", ns)
+    return ns["hidden"]
+
+
+@pytest.mark.parametrize("name", sorted(purity.IMPURE_BUILTIN_NAMES))
+def test_every_named_impure_builtin_is_proved_impure(name):
+    # Any name that stops matching is a hole in the guarantee: the block calling
+    # it keeps its parallel routing. open is why the match is on the object the
+    # name resolves to and not on __module__, which open reports as "io".
+    verdict, reason = purity.classify(getattr(builtins, name))
+    assert verdict == purity.IMPURE
+    assert reason == f"'{name}' performs I/O or mutates state"
+
+
+def test_stateful_modules_downgrade_their_callables():
+    import logging
+
+    verdict, reason = purity.classify(logging.getLogger)
+    assert verdict == purity.IMPURE
+    assert reason == "'getLogger' belongs to the stateful module 'logging'"
+    assert purity.classify(random.randint)[0] == purity.IMPURE
+
+
+def test_call_chain_is_followed_to_the_depth_limit_and_no_further():
+    # Depth is the analyser's budget, and anything it cannot prove impure keeps
+    # its routing, so this boundary decides which call chains stay parallel.
+    # The memo is verdict-only, so it has to be cleared between the probes.
+    for fn, expected in (
+        (_chain_3, purity.IMPURE),
+        (_chain_2, purity.IMPURE),
+        (_chain_1, purity.PURE),
+    ):
+        purity.reset_memo()
+        assert purity.classify(fn)[0] == expected, fn.__name__
+
+
+def test_a_local_container_is_not_shared_state():
+    # local_names is the union of locals and cellvars; narrowing it would report
+    # every local mutation as a write to shared state and stop parallelising
+    # blocks that are provably safe.
+    assert purity.classify(_local_accumulator) == (purity.PURE, "")
+
+
+def test_impurity_is_followed_through_a_module_attribute_call():
+    verdict, reason = purity.classify(_calls_module_random)
+    assert verdict == purity.IMPURE
+    assert reason.startswith("calls 'random.randint' which ")
+
+
+def test_a_module_attribute_call_spends_the_same_depth_budget():
+    # The attribute branch keeps its own recursion into classify, so it can
+    # drift from the plain-name branch and give dotted calls a shorter budget.
+    purity.reset_memo()
+    assert purity.classify(_calls_chain_via_module_attribute)[0] == purity.IMPURE
+    purity.reset_memo()
+    assert purity.classify(_calls_deep_chain_via_module_attribute)[0] == purity.PURE
+
+
+def test_calls_that_are_not_plain_names_are_declined():
+    # A dotted chain and a call through a subscript do not resolve to an object,
+    # so the analyser has to decline rather than reach for .id.
+    assert purity.classify(_calls_nested_attribute)[0] == purity.PURE
+    assert purity.classify(_calls_through_a_table)[0] == purity.PURE
+
+
+def test_declaring_global_or_nonlocal_is_proof_of_impurity():
+    assert purity.classify(_declares_globals) == (
+        purity.IMPURE,
+        "declares global _counter_a, _counter_b",
+    )
+    assert purity.classify(_outer_declares_nonlocal) == (purity.IMPURE, "declares nonlocal seen")
+
+
+def test_every_route_to_a_pure_verdict_carries_no_reason():
+    purity.reset_memo()
+    assert purity.classify(None) == (purity.PURE, "")
+    assert purity.classify(math.sqrt) == (purity.PURE, "")
+    assert purity.classify(42) == (purity.PURE, "")
+    assert purity.classify(_chain_1) == (purity.PURE, "")
+    assert purity.classify(_function_without_source()) == (purity.PURE, "")
+    assert purity.classify(pure_math) == (purity.PURE, "")
+    # the memo answers before the budget check, so the cut-off route needs a
+    # cold cache to be reached at all
+    purity.reset_memo()
+    assert purity.classify(pure_math, 0) == (purity.PURE, "")
+
+
+def test_verdicts_are_memoised_by_code_object():
+    # The analyser walks a function once; re-walking it at every call site would
+    # make classification quadratic in the call graph.
+    purity.reset_memo()
+    verdict = purity.classify(calls_stateful)
+    assert purity._verdicts[id(calls_stateful.__code__)] == verdict
+    purity._verdicts[id(calls_stateful.__code__)] = (purity.PURE, "from the memo")
+    assert purity.classify(calls_stateful) == (purity.PURE, "from the memo")
+    purity.reset_memo()
+
+
+def test_random_in_body_runs_sequential_seeded_exact():
     src = block(["ys[i] = random.randint(0, 10 ** 9)"])
     _, spec = build(src)
     random.seed(999)

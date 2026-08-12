@@ -39,8 +39,11 @@ def classify(
     if obj is None:
         return PURE, ""
     if isinstance(obj, types.BuiltinFunctionType):
-        if getattr(obj, "__module__", None) == "builtins" and obj.__name__ in IMPURE_BUILTIN_NAMES:
-            return IMPURE, f"'{obj.__name__}' performs I/O or mutates state"
+        # open reports __module__ == "io", so match the object the name resolves
+        # to rather than the module that defined it
+        name = getattr(obj, "__name__", "")
+        if name in IMPURE_BUILTIN_NAMES and getattr(builtins, name, None) is obj:
+            return IMPURE, f"'{name}' performs I/O or mutates state"
         return PURE, ""
     if getattr(obj, "__module__", None) in IMPURE_MODULES:
         return IMPURE, (
