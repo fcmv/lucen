@@ -372,11 +372,15 @@ outright if the consumer takes only a prefix or mutates the source first. A
 marked generator expression runs as unmodified Python.
 
 `total = sum(elt for t in it)` is the exception, because `sum` provably drains
-the generator at that line and keeps none of it: accumulating in place computes
-the same elements the same number of times. It runs through the ordered
-reduction fold, so the addition order, and therefore the floating point result,
-matches sequential execution. Further `for` clauses are refused there, since
-summing per-row subtotals would regroup the additions.
+the generator at that line and keeps none of it: producing its elements at the
+marked line computes the same elements the same number of times. Only the
+elements are parallelized. They land in one positional list, and `sum` itself
+then runs over that list, sequentially, after the join. Reusing the builtin is
+what keeps the result exact: `sum` is not an accumulating loop on CPython 3.12
+and newer, which carry a compensation term when summing floats, so a `+` fold
+over the same elements in the same order returns different bits. Further `for`
+clauses are refused, since only the outermost iterable is chunked and each slot
+would hold a whole row rather than an element.
 
 ### 4.2 Sized iterables only
 

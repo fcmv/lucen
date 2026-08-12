@@ -206,9 +206,7 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
     result = f"_plx_r_{spec.line}"
     plan = analysis.comprehension
     prologue: List[str] = []
-    if plan is not None and plan.kind == "reduce":
-        prologue = [f"{indent}{plan.target} = {plan.init}"]
-    elif plan is not None:
+    if plan is not None:
         # Size the result before dispatch, from a single materialization: the
         # source may be a one-shot iterator, and reading it twice (once to size,
         # once to iterate) would consume it. Unwritten slots keep the sentinel so
@@ -228,18 +226,7 @@ def _call_site(analysis, spec, indent: str) -> List[str]:
     ]
     if plan is not None:
         # Comprehension targets do not leak in Python 3, so the loop variables
-        # are deliberately not rebound; a reduction still has to collect its
-        # accumulator, which follows those targets in the result tuple.
-        if plan.kind == "reduce":
-            slot = len(artifact.loop_targets)
-            return (
-                prologue
-                + call
-                + [
-                    f"{indent}if {result} is not None:",
-                    f"{indent}    {plan.target} = {result}[{slot}]",
-                ]
-            )
+        # are deliberately not rebound.
         return prologue + call + _comprehension_epilogue(plan, indent)
     rebind = ", ".join(
         artifact.loop_targets + [r.scalar for r in artifact.reductions if "." not in r.scalar]
@@ -254,20 +241,27 @@ def _comprehension_epilogue(plan, indent: str) -> List[str]:
     """Turn the positional slots into the comprehension's own result.
 
     Runs sequentially after the join, so the rebuilt set or dict sees the same
-    insertion order, and therefore the same iteration order, as plain Python.
+    insertion order as plain Python, and `sum` adds the slots with the builtin.
     """
     kept = "_plx_run" if plan.nested else "_plx_v"
     guard = f" if {kept} is not _lucen_rt.SKIP" if plan.filtered else ""
     if plan.nested:
-        rows = f"[_plx_v for {kept} in {plan.target}{guard} for _plx_v in {kept}]"
+        rows = f"_plx_v for {kept} in {plan.target}{guard} for _plx_v in {kept}"
     elif plan.filtered:
-        rows = f"[{kept} for {kept} in {plan.target}{guard}]"
+        rows = f"{kept} for {kept} in {plan.target}{guard}"
     else:
-        rows = plan.target
+        rows = None
+    if plan.kind == "sum":
+        # The builtin, not an equivalent fold: CPython 3.12 and newer carry a
+        # compensation term when summing floats.
+        start = "" if plan.init is None else f", {plan.init}"
+        stream = plan.target if rows is None else f"({rows})"
+        return [f"{indent}{plan.target} = sum({stream}{start})"]
+    result = plan.target if rows is None else f"[{rows}]"
     if plan.kind == "set":
-        rows = f"set({rows})"
+        result = f"set({result})"
     elif plan.kind == "dict":
-        rows = f"dict({rows})"
-    if rows == plan.target:
+        result = f"dict({result})"
+    if result == plan.target:
         return []
-    return [f"{indent}{plan.target} = {rows}"]
+    return [f"{indent}{plan.target} = {result}"]

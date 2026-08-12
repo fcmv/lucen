@@ -135,6 +135,42 @@ def test_every_comprehension_form_is_bit_identical(tmp_path):
     assert lucen.stdout == plain.stdout
 
 
+COMPENSATED_SUM_SCRIPT = """
+def f(x):
+    return 1e16 if x == 0 else 1.0
+
+
+def main():
+    xs = list(range(400))
+    # LUCEN START
+    total = sum(f(x) for x in xs)
+    # LUCEN END
+    # LUCEN START
+    kept = sum((f(x) for x in xs if x != 7), 1e16)
+    # LUCEN END
+    print("sums:", repr(total), repr(kept))
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def test_sum_reproduces_the_builtin_not_an_accumulating_loop(tmp_path):
+    # `sum` is not a `+=` loop on CPython 3.12 and newer, which compensate float
+    # sums. These magnitudes make the two disagree on any IEEE-754 platform; a
+    # data-dependent checksum only catches it where libm rounds it into view.
+    script = tmp_path / "compsum.py"
+    script.write_text(COMPENSATED_SUM_SCRIPT, encoding="utf-8")
+    plain = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    lucen = subprocess.run(
+        [sys.executable, "-m", "lucen", "run", str(script)], capture_output=True, text=True
+    )
+    assert plain.returncode == 0, plain.stderr
+    assert lucen.returncode == 0, lucen.stderr
+    assert lucen.stdout == plain.stdout
+
+
 def test_list_comprehension_is_bit_identical(tmp_path):
     # A comprehension desugars to an indexed loop, so the result must match
     # plain Python exactly and the comprehension variable must not leak.

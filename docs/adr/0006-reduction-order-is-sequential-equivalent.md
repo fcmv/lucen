@@ -32,6 +32,14 @@ the only two documented exceptions to naive/expert output parity.
 - A parallel float reduction is bit-identical to sequential, on every backend
   and every interpreter. This is verified continuously by the property suite,
   which compares float reductions bit-for-bit.
+- What the fold reproduces is the sequential *loop*: `acc = acc + x` per
+  element, left to right. A builtin that sums by some other method is therefore
+  not foldable, and the fold is the wrong tool for one. `sum` is exactly that
+  case: on CPython 3.12 and newer it carries a Neumaier compensation term for
+  floats, so folding `+` over its elements returns different bits from calling
+  it, however faithful the order. A marked `sum` parallelizes the elements only
+  and then calls the builtin over them (LIMITATIONS 4.1); anything else that
+  reduces by a rule other than left-to-right `+` has to do the same.
 - The fold cost is proportional to the number of chunks, not the number of
   elements, so sequential-equivalent ordering is effectively free.
 - Combine parallelism (a tree of partial sums) is unavailable by default. This

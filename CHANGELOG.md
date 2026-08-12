@@ -12,8 +12,11 @@ adheres to [Semantic Versioning](https://semver.org/).
   and further `for` clauses. Each form builds one positional list over the
   outermost iterable and is rebuilt sequentially afterwards, so results,
   including dict and set iteration order, match plain Python exactly.
-- `total = sum(elt for t in it)` is parallelized through the ordered reduction
-  fold. A bare generator expression is lazy and is never parallelized.
+- `total = sum(elt for t in it)` is parallelized. Its elements are computed in
+  parallel into one positional list and `sum` itself adds them afterwards, so
+  the total is bit-identical to the builtin's, including the compensated float
+  summation CPython 3.12 and newer use. A bare generator expression is lazy and
+  is never parallelized.
 
 ## [1.1.1] - 2026-08-04
 
