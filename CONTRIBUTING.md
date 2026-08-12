@@ -64,6 +64,11 @@ a pure-Python twin that must return exactly the same value, and CI runs the
 suite under `LUCEN_DISABLE_NATIVE=1` for exactly this reason. A change that
 passes on one path and not the other is not done.
 
+Set `LUCEN_DISABLE_CACHE=1` when you compare rewritten output by hand. The
+rewrite cache is keyed partly on `__version__`, which does not move while you
+edit, so a checkout will serve a rewrite built by the codegen you just changed
+and report no difference where there is one.
+
 ### 2. Routing changes come with evidence
 
 A change to backend selection, the cost model, or dispatch must show, with a

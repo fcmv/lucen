@@ -8,7 +8,7 @@ import pytest
 
 from lucen import import_hook
 from lucen.execution import dispatch
-from lucen.support import config
+from lucen.support import cache, config
 from lucen.support.errors import (
     ClauseValueError,
     ErrorsMode,
@@ -151,6 +151,31 @@ def test_cache_round_trip(project, monkeypatch):
     mod = importlib.import_module(name)
     ys, _ = mod.run_map(mod.prepare(600))
     assert ys == [v * 3 + 1 for v in range(600)]
+
+
+def test_disabled_cache_re_runs_the_pipeline(project, monkeypatch):
+    # A checkout keeps one __version__ across edits, so the key alone cannot
+    # tell a rewrite from the previous codegen apart from a current one.
+    name = _write(project, "plxmod_nocache", MODULE_OK)
+    importlib.import_module(name)
+    del sys.modules[name]
+    monkeypatch.setattr(cache, "_DISABLED", True)
+    calls = []
+    real = import_hook.rewrite_module
+    monkeypatch.setattr(
+        import_hook, "rewrite_module", lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    )
+    mod = importlib.import_module(name)
+    assert calls
+    ys, _ = mod.run_map(mod.prepare(600))
+    assert ys == [v * 3 + 1 for v in range(600)]
+
+
+def test_disabled_cache_writes_nothing(project, monkeypatch):
+    monkeypatch.setattr(cache, "_DISABLED", True)
+    name = _write(project, "plxmod_nowrite", MODULE_OK)
+    importlib.import_module(name)
+    assert not (project / ".lucen_cache").exists()
 
 
 def test_trusted_call_with_shared_arg_stays_sequential(project):

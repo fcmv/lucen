@@ -12,6 +12,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   and further `for` clauses. Each form builds one positional list over the
   outermost iterable and is rebuilt sequentially afterwards, so results,
   including dict and set iteration order, match plain Python exactly.
+- `LUCEN_DISABLE_CACHE=1` bypasses the rewrite cache, for work on Lucen's own
+  codegen: the cache key includes the Lucen version, which does not move
+  between edits to a checkout.
 - `total = sum(elt for t in it)` is parallelized. Its elements are computed in
   parallel into one positional list and `sum` itself adds them afterwards, so
   the total is bit-identical to the builtin's, including the compensated float

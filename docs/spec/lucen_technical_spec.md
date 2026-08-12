@@ -171,6 +171,8 @@ modules already imported keep their rewrites.
 - **Rewrite cache:** keyed by source content hash, Lucen version, and
   interpreter version, so a warm import skips scan, rewrite, analyze, and
   codegen. Written atomically and readable by PROCESS-backend children.
+  `LUCEN_DISABLE_CACHE` bypasses both read and write, for work on Lucen's own
+  codegen, where the version key cannot distinguish one edit from the next.
 
 ### 5.2 Pragma Scanner
 

@@ -14,6 +14,10 @@ _DIR_NAME = ".lucen_cache"
 
 _SCHEMA = "2"
 
+# Editing Lucen itself does not move __version__, so a checkout keeps serving a
+# rewrite produced by the previous state of the codegen.
+_DISABLED = bool(os.environ.get("LUCEN_DISABLE_CACHE"))
+
 
 @dataclass
 class Entry:
@@ -36,6 +40,8 @@ def _path(cache_root: str, filename: str, key: str) -> str:
 
 
 def load(cache_root: str, filename: str, source: str) -> Optional[Entry]:
+    if _DISABLED:
+        return None
     path = _path(cache_root, filename, _key(source))
     try:
         with open(path, "rb") as f:
@@ -46,6 +52,10 @@ def load(cache_root: str, filename: str, source: str) -> Optional[Entry]:
 
 
 def store(cache_root: str, filename: str, source: str, entry: Entry) -> None:
+    # Writing while reads are bypassed would leave an entry the next unbypassed
+    # run trusts, which is the same staleness one step removed.
+    if _DISABLED:
+        return
     directory = os.path.join(cache_root, _DIR_NAME)
     os.makedirs(directory, exist_ok=True)
     path = _path(cache_root, filename, _key(source))
