@@ -17,7 +17,7 @@ from lucen.support.errors import (
     set_errors_mode,
 )
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 __all__ = [
     "activate",

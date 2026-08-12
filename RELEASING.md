@@ -11,12 +11,18 @@ Lucen follows [Semantic Versioning](https://semver.org/); what a major,
 minor, or patch bump means for each part of the public surface is defined in
 [STABILITY.md](STABILITY.md).
 
-The version appears in three places, which must agree:
+The version appears in five places, which must agree:
 
 - `pyproject.toml`, `[project].version`
 - `lucen/__init__.py`, `__version__` (the pure-Python wheel reads its version
   from here)
 - `lucen_core/Cargo.toml`, `[package].version`
+- `lucen_core/Cargo.lock`, the `lucen_core` package entry, which cargo would
+  otherwise rewrite on the next build
+- `CITATION.cff`, `version`, alongside `date-released`
+
+Check with `grep -rn "<previous version>"` before committing the bump: a field
+missed here ships a wrong version string in an artifact nothing else validates.
 
 ## Cutting a release
 
