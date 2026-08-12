@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import random
 
 import pytest
@@ -250,3 +251,52 @@ def test_list_commit_takes_the_slice_path_and_never_leaks_skip():
 
 def test_fold_over_no_sites_returns_the_accumulator():
     assert fold_contributions(7, [], "+") == 7
+
+
+def test_skip_is_a_singleton_with_a_stable_marker():
+    # SKIP marks an iteration that wrote nothing, so it has to stay
+    # distinguishable from every value a chunk could legitimately produce, and
+    # keep its identity across the process boundary: a slab that came back with
+    # a copy would commit the marker instead of leaving the slot alone.
+    from lucen.execution.runtime import _Skip
+
+    assert _Skip() is SKIP
+    assert pickle.loads(pickle.dumps(SKIP)) is SKIP
+    assert repr(SKIP) == "<lucen.SKIP>"
+
+
+def test_new_list_slab_is_prefilled_with_the_marker():
+    from lucen.execution.runtime import new_list_slab
+
+    assert new_list_slab(3) == [SKIP, SKIP, SKIP]
+    assert new_list_slab(0) == []
+
+
+def test_contiguous_buffer_slab_commits_as_one_slice_store():
+    # The buffer fast path exists to replace n per-element stores with a single
+    # slice store. A strided range must not reach it: the slice would pack the
+    # values into consecutive slots instead of the ones the loop wrote.
+    class Counting(bytearray):
+        writes = 0
+
+        def __setitem__(self, index, value):
+            type(self).writes += 1
+            bytearray.__setitem__(self, index, value)
+
+    Counting.writes = 0
+    target = Counting(b"\x00" * 6)
+    commit_list_slab(target, range(1, 5), bytearray(b"\x01\x02\x03\x04"))
+    assert bytes(target) == b"\x00\x01\x02\x03\x04\x00"
+    assert Counting.writes == 1
+
+    Counting.writes = 0
+    strided = Counting(b"\x00" * 6)
+    commit_list_slab(strided, range(0, 6, 2), bytearray(b"\x07\x08\x09"))
+    assert bytes(strided) == b"\x07\x00\x08\x00\x09\x00"
+    assert Counting.writes == 3
+
+
+def test_strided_list_commit_uses_the_element_loop():
+    target = [0] * 6
+    commit_list_slab(target, range(0, 6, 2), [7, 8, 9])
+    assert target == [7, 0, 8, 0, 9, 0]

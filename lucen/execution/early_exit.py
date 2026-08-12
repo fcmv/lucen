@@ -98,18 +98,9 @@ def _commit_prefix(spec, plan, record, env, exit_pos) -> None:
 def _rebind_exit(spec, plan, env, exit_pos) -> Optional[tuple]:
     artifact = spec.artifact
     pos = min(exit_pos, plan.n - 1) if exit_pos != float("inf") else plan.n - 1
-    element = _element_at(plan, pos)
-    ns: Dict[str, Any] = {"_v": element}
+    ns: Dict[str, Any] = {"_v": plan.element_at(pos)}
     exec(f"{artifact.target_source} = _v", {}, ns)
     return tuple(ns[t] for t in artifact.loop_targets)
-
-
-def _element_at(plan, pos: int):
-    if plan.domain == "range":
-        return plan.base[pos]
-    if plan.domain == "enumerate":
-        return (pos, plan.seq[pos])
-    return plan.seq[pos]
 
 
 def _chunk_args(spec, plan, record, env, module_globals, gate, exit_holder):

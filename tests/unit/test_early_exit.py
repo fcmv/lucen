@@ -12,6 +12,7 @@ from lucen.analysis.selector import Eligibility, select
 from lucen.codegen import generate
 from lucen.execution import dispatch
 from lucen.execution.dispatch import execute, make_spec
+from lucen.execution.planning import _Plan
 from lucen.support import config
 from lucen.support.errors import (
     ErrorsMode,
@@ -187,3 +188,12 @@ def test_activate_rejects_unknown_experimental():
     with pytest.raises(ValueError):
         lucen.activate(experimental=["teleport"])
     lucen.deactivate()
+
+
+def test_plan_element_at_covers_every_domain():
+    # The exit rebind reads the element the loop stopped on. Each domain holds
+    # it differently and enumerate has to rebuild the (index, value) pair, so a
+    # domain falling through to the wrong branch rebinds the wrong target.
+    assert _Plan("range", range(10, 20, 2), None, 5).element_at(3) == 16
+    assert _Plan("enumerate", None, ["a", "b", "c"], 3).element_at(1) == (1, "b")
+    assert _Plan("sequence", None, ["a", "b", "c"], 3).element_at(2) == "c"
