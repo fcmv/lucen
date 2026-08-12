@@ -54,6 +54,12 @@ loop has always carried: the parallel result is bit-identical to plain Python.
 - The `sum` support above was corrected before release: the first
   implementation folded `+` over the elements, which is not what `sum` does on
   CPython 3.12 and newer. No released version carried it.
+- The profitability gate's tests feed the probe a measurement instead of timing
+  one chunk on the clock. That timing is a few microseconds, so one preemption
+  on a shared runner routed a tiny block parallel and failed the suite. The
+  profitable half of the gate is now covered as well; every other test that
+  asserts a parallel run forces the backend with `calibrate=false`, which skips
+  the gate entirely.
 
 ### Dependencies
 
