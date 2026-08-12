@@ -28,6 +28,37 @@ loop has always carried: the parallel result is bit-identical to plain Python.
   between edits to a checkout, so a stale rewrite would otherwise be served as
   current.
 
+### Documentation
+
+- `LIMITATIONS.md` records two behaviours that shipped without an entry: an
+  exception that cannot be rebuilt from its message degrades to `RuntimeError`
+  when it crosses the process boundary, and its traceback does not survive; and
+  a process pool on a spawn platform costs one import graph per worker, so peak
+  memory scales with the worker count rather than the data.
+- `RELEASING.md` now lists five version fields rather than three. The
+  `lucen_core/Cargo.lock` entry and `CITATION.cff` were undocumented, so a
+  release following the old instructions shipped a stale lock and a citation
+  record naming the previous version.
+
+### Internal
+
+- `tools/mutation_report.py` runs mutation testing over the correctness core and
+  reports the survivors with their diffs. It runs the suite once per accel mode,
+  because pinning one mode makes the other dead code and its mutations report as
+  false survivors. A non-gating nightly CI lane runs the same thing.
+- Test coverage for deep attribute paths and the contiguous-coverage audit in
+  the native accelerator.
+- The generated `assets/` SVGs and PNGs are ASCII-only.
+- Mutation-testing artifacts are ignored, and two comments were trimmed to the
+  house length.
+- The `sum` support above was corrected before release: the first
+  implementation folded `+` over the elements, which is not what `sum` does on
+  CPython 3.12 and newer. No released version carried it.
+
+### Dependencies
+
+- `pyo3` 0.29.0 to 0.29.1 (#8).
+
 ## [1.1.1] - 2026-08-04
 
 ### Fixed
