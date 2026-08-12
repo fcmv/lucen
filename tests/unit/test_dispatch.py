@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import sys
 import time
 
 import pytest
@@ -10,8 +11,9 @@ from lucen.analysis.rewriter import analyze_source
 from lucen.analysis.scanner import scan_source
 from lucen.analysis.selector import select
 from lucen.codegen import generate
-from lucen.execution import dispatch, nested_guard
+from lucen.execution import dispatch, nested_guard, preflight
 from lucen.execution.dispatch import execute, make_spec
+from lucen.execution.planning import _plan_domain, _Record
 from lucen.support import config
 from lucen.support.errors import (
     ErrorsMode,
@@ -512,3 +514,118 @@ def test_preflight_refusal_falls_back_sequentially():
     assert p["ys"] == golden(src, env)["ys"]
     assert any(r.error == "PreflightCheckError" for r in get_fallback_report())
     assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
+
+
+def _record(idx: int, error=None) -> _Record:
+    return _Record(idx, idx, idx + 1, {}, {}, errors=[], error=error)
+
+
+def test_contiguous_prefix_stops_at_the_first_gap_or_failure():
+    # What survives an interrupted or timed-out run is a gapless run of chunks
+    # from the lowest one that finished. A scattered subset would leave the
+    # caller a post-state no interrupted sequential run can produce.
+    prefix = dispatch._contiguous_prefix
+    assert prefix([]) == []
+    assert [r.idx for r in prefix([_record(1), _record(2), _record(3)])] == [1, 2, 3]
+    assert [r.idx for r in prefix([_record(1), _record(3)])] == [1]
+    assert [r.idx for r in prefix([_record(4), _record(5)])] == [4, 5]
+    assert [r.idx for r in prefix([_record(1), _record(2, ValueError()), _record(3)])] == [1]
+    assert prefix([_record(1, ValueError())]) == []
+
+
+def _stack_depth() -> int:
+    depth = 0
+    frame = sys._getframe(1)
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return depth
+
+
+def test_recursion_headroom_counts_the_live_stack_plus_the_frames_dispatch_adds():
+    # The gate compares this against a fixed floor, so an off-by-one moves the
+    # limit at which a user-lowered recursion limit stops being safe to
+    # parallelize under.
+    assert dispatch._recursion_headroom() == sys.getrecursionlimit() - _stack_depth() - 2
+
+
+@pytest.mark.parametrize("span,expected", [((3, 4), 6400.0), ((2, 6), 1600.0)])
+def test_chunk_probe_reports_nanoseconds_per_iteration(monkeypatch, span, expected):
+    # A reduction cannot use the twin probe, so this is the only route into
+    # _probe. The gate is fed a per-iteration cost; charging it the whole chunk
+    # would scale the estimate with the chunk size. The spans start away from
+    # zero so the width is not confusable with the bounds' sum.
+    src = block(["total += xs[i]"], header="for i in range(len(xs)):")
+    _, spec = build(src)
+    env = {"xs": list(range(8)), "total": 0}
+    plan = _plan_domain(spec.artifact, range(8))
+    gate = preflight.check(spec, env, None)
+    ticks = iter([1_000, 7_400])
+    monkeypatch.setattr(time, "perf_counter_ns", lambda: next(ticks))
+    record, per_iteration = dispatch._probe(spec, plan, span, env, None, gate)
+    assert per_iteration == expected
+    assert record.idx == 0
+    assert record.error is None
+
+
+def test_chunk_probe_captures_a_failure_instead_of_raising():
+    # The probe runs real user code as chunk 0. Its exception belongs on the
+    # record so the caller can commit the prefix before re-raising it.
+    src = block(["total += 100 // xs[i]"], header="for i in range(len(xs)):")
+    _, spec = build(src)
+    env = {"xs": [0, 1, 2, 3], "total": 0}
+    plan = _plan_domain(spec.artifact, range(4))
+    gate = preflight.check(spec, env, None)
+    record, _ = dispatch._probe(spec, plan, (0, 2), env, None, gate)
+    assert isinstance(record.error, ZeroDivisionError)
+
+
+def test_calibrated_reduction_commits_the_probe_chunk_exactly_once(monkeypatch):
+    # The chunk probe leaves its contributions on a record instead of in env, so
+    # the join has to fold it in; dropping or double-counting it moves the sum.
+    src = block(["total += vals[i] * 1.0001"], header="for i in range(len(vals)):")
+    _, spec = build(src)
+    monkeypatch.setattr(dispatch, "_profitable", lambda *a, **k: True)
+    env = {"vals": [0.1 * k + 0.007 for k in range(3000)], "total": 1.5}
+    run_env = copy.deepcopy(env)
+    result = execute(spec, range(3000), run_env, force_backend="thread")
+    g = golden(src, env)
+    assert run_env["total"] == g["total"]
+    assert result == (2999, g["total"])
+    stats = dispatch.get_block_stats()[spec.key]
+    assert stats["probe_ns"] is not None
+    assert stats["parallel_runs"] == 1
+
+
+def test_interrupt_in_the_join_commits_only_the_completed_prefix(monkeypatch):
+    # Ctrl-C in the collecting thread unwinds through _abandon: chunks that never
+    # started are cancelled, running ones are settled before the caller's
+    # containers are touched, and only the gapless prefix is committed.
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: 2)
+    src = block(
+        ["seen[i] = pace(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=16), trust=callables",
+    )
+    _, spec = build(src)
+    n = 160
+    env = {"xs": list(range(n)), "seen": {}, "pace": lambda v: (time.sleep(0.01), v * 2)[1]}
+    real_wait, calls = dispatch.wait, []
+
+    def interrupting(fs, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            real_wait(fs, timeout=0.15)
+            raise KeyboardInterrupt
+        return real_wait(fs, **kwargs)
+
+    monkeypatch.setattr(dispatch, "wait", interrupting)
+    with pytest.raises(KeyboardInterrupt):
+        execute(spec, range(n), env, force_backend="thread")
+
+    committed = sorted(env["seen"])
+    assert committed == list(range(len(committed)))
+    assert 0 < len(committed) < n, "the run neither committed a prefix nor left work cancelled"
+    assert all(env["seen"][i] == i * 2 for i in committed)
+    assert dispatch.get_block_stats()[spec.key]["interrupted_runs"] == 1
