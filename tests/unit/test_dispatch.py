@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import copy
 import sys
+import threading
 import time
 
 import pytest
@@ -14,7 +15,7 @@ from lucen.codegen import generate
 from lucen.execution import dispatch, nested_guard, preflight
 from lucen.execution.dispatch import execute, make_spec
 from lucen.execution.planning import _plan_domain, _Record
-from lucen.support import config
+from lucen.support import config, costmodel
 from lucen.support.errors import (
     ErrorsMode,
     ParallelTimeoutError,
@@ -316,6 +317,55 @@ def test_timeout_whole_block_raises():
         run(src, env)
 
 
+def test_timeout_commits_the_finished_prefix_and_names_the_bound(monkeypatch):
+    # The wait elapsing is what decides a timeout, not a re-read of the clock.
+    # The chunks that did finish are committed as a prefix and the cancelled
+    # tail is left exactly as the caller passed it in. The pool is pinned to two
+    # threads so the tail is still queued, and so cancellable, on any host.
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: 2)
+    src = block(
+        ["seen[i] = crawl(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=8), "
+        "timeout=0.3, trust=callables",
+    )
+    _, spec = build(src)
+    n = 16
+    env = {
+        "xs": list(range(n)),
+        "seen": {},
+        "crawl": lambda v: (time.sleep(0.001 if v < 4 else 0.5), v * 2)[1],
+    }
+    with pytest.raises(ParallelTimeoutError) as raised:
+        execute(spec, range(n), env, force_backend="thread")
+    assert raised.value.args[0].endswith(
+        "block exceeded its timeout= bound (cooperative on THREAD: running chunks finished first)"
+    )
+
+    committed = sorted(env["seen"])
+    assert 0 < len(committed) < n
+    assert committed == list(range(len(committed)))
+    assert all(env["seen"][i] == i * 2 for i in committed)
+    assert dispatch.get_block_stats()[spec.key]["workers"] == 2
+
+
+def test_a_block_that_beats_its_deadline_is_not_a_timeout():
+    # The timeout branch is reached only when the wait elapsed; a run that
+    # completed inside the bound must not be turned into a timeout by it.
+    src = block(
+        ["ys[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4), timeout=30",
+    )
+    _, spec = build(src)
+    n = 400
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v * 2 for v in range(n)]
+    assert dispatch.get_block_stats()[spec.key]["parallel_runs"] == 1
+
+
 def test_nested_guard_forces_sequential():
     src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses="calibrate=false")
     analysis, spec = build(src)
@@ -395,7 +445,10 @@ def test_limits_clamp_pool_size_and_report():
     env = {"xs": list(range(1000)), "ys": [0] * 1000}
     p, _, _ = run(src, env)
     assert p["ys"] == golden(src, env)["ys"]
-    assert any(r.error == "LimitClamp" for r in get_fallback_report())
+    assert any(
+        r.error == "LimitClamp" and r.message.startswith("pool_size=")
+        for r in get_fallback_report()
+    )
 
 
 def test_ft_heavy_block_promoted_to_thread(monkeypatch):
@@ -516,6 +569,260 @@ def test_preflight_refusal_falls_back_sequentially():
     assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
 
 
+_INSTRUMENTED = (
+    "calibrate=false, timeout=5.0(per_task=true), "
+    "progress=callback(cb, per_task=true), on_error=collect"
+)
+
+
+def test_generated_parameters_are_never_treated_as_user_names():
+    # arg_names is what preflight resolves out of the caller's frame, so a
+    # generated parameter leaking into it would be looked up as a user variable
+    # and refuse the block on a name the user never wrote.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses=_INSTRUMENTED)
+    _, spec = build(src)
+    assert dispatch._EXTRA_PARAMS <= set(spec.artifact.params)
+    assert [n for n in spec.arg_names if n.startswith("_plx")] == []
+
+
+def test_generated_parameters_resolve_to_their_runtime_values():
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses=_INSTRUMENTED)
+    _, spec = build(src)
+    env = {"xs": list(range(8)), "ys": [0] * 8, "cb": lambda *_: None}
+    plan = _plan_domain(spec.artifact, range(8))
+    record = dispatch._new_record(spec, plan, 1, 0, 4)
+    gate = preflight.check(spec, env, None)
+
+    bound = dict(
+        zip(spec.artifact.params, dispatch._chunk_args(spec, plan, record, env, None, gate, 123.0))
+    )
+    assert bound["_plx_indices"] == range(0, 4)
+    assert bound["_plx_errors"] is record.errors
+    assert bound["_plx_clock"] is time.monotonic
+    assert bound["_plx_deadline"] == 123.0
+    assert isinstance(bound["_plx_timeout_error"], ParallelTimeoutError)
+    assert bound["_plx_progress"] is gate.progress_cb
+    for slab_plan in spec.artifact.slabs:
+        assert bound[slab_plan.param] is record.slabs[slab_plan.param]
+
+    # no timeout= bound means the generated guard must never fire
+    unbounded = dict(
+        zip(spec.artifact.params, dispatch._chunk_args(spec, plan, record, env, None, gate, None))
+    )
+    assert unbounded["_plx_deadline"] == float("inf")
+
+
+def test_free_threaded_reads_the_interpreter_probe(monkeypatch):
+    monkeypatch.delattr(sys, "_is_gil_enabled", raising=False)
+    assert dispatch.free_threaded() is False
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert dispatch.free_threaded() is False
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    assert dispatch.free_threaded() is True
+
+
+def test_pool_threads_are_named_and_released_on_shutdown():
+    dispatch.shutdown()
+    pool = dispatch._ensure_pool(2)
+    assert pool.submit(lambda: threading.current_thread().name).result().startswith("lucen")
+    dispatch.shutdown()
+    assert dispatch._pool is None
+
+
+def test_shutdown_waits_for_work_already_running():
+    # atexit runs this; returning before a chunk finishes would let the
+    # interpreter tear down under a thread still writing into user containers.
+    dispatch.shutdown()
+    pool = dispatch._ensure_pool(2)
+    finished: list = []
+    pool.submit(lambda: (time.sleep(0.2), finished.append(1)))
+    dispatch.shutdown()
+    assert finished == [1]
+
+
+def test_spec_repr_omits_the_compiled_pair():
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    spec.fns()
+    assert "_fns" not in repr(spec)
+
+
+def test_calibration_memo_expires_by_use_count_and_regime_change():
+    # The memo is what lets a hot block skip re-probing. It has to expire, or a
+    # measurement taken at one size would keep routing a run of another size.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):")
+    _, spec = build(src)
+
+    dispatch._memo[spec.key] = (500.0, 1000, 0)
+    for _ in range(dispatch._MEMO_MAX_USES):
+        assert dispatch._memo_lookup(spec, 1000) == 500.0
+    assert dispatch._memo_lookup(spec, 1000) is None
+
+    factor = dispatch._MEMO_REGIME_FACTOR
+    dispatch._memo[spec.key] = (500.0, 1000, 0)
+    assert dispatch._memo_lookup(spec, 1000 * factor) == 500.0
+    assert dispatch._memo_lookup(spec, 1000 * factor + 1) is None
+    assert dispatch._memo_lookup(spec, 1000 // factor - 1) is None
+
+
+def _spec_with(clauses: str):
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses=clauses)
+    return build(src)[1]
+
+
+def test_on_fallback_override_resolves_every_clause_form():
+    assert dispatch._fallback_override(_spec_with("calibrate=false"), "conflict") is None
+    assert dispatch._fallback_override(_spec_with("on_fallback=hard"), "conflict") == "hard"
+    assert dispatch._fallback_override(_spec_with("on_fallback=quiet"), "conflict") == "quiet"
+    custom = _spec_with("on_fallback=custom(handler=cb)")
+    assert dispatch._fallback_override(custom, "conflict") is None
+    # an allowed reason is demoted to a report, everything else keeps the mode
+    allowed = _spec_with("on_fallback=hard(allow=[unprofitable])")
+    assert dispatch._fallback_override(allowed, "unprofitable") == "report"
+    assert dispatch._fallback_override(allowed, "conflict") == "hard"
+
+
+def test_sizing_honours_the_clause_then_the_config_then_the_ceiling(monkeypatch):
+    explicit = _spec_with("calibrate=false, backend=thread(pool_size=3, chunks=7)")
+    assert dispatch._sizing(explicit, 100, "thread") == (3, 7)
+    # a domain smaller than the requested chunk count cannot be split that far
+    assert dispatch._sizing(explicit, 4, "thread") == (3, 4)
+
+    plain = _spec_with("calibrate=false")
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: 8)
+    config.set_active(config.Config(max_threads_per_block=2, max_processes_per_block=5))
+    assert dispatch._sizing(plain, 1000, "thread") == (2, 2 * costmodel.CHUNKS_PER_WORKER)
+    assert dispatch._sizing(plain, 1000, "process") == (5, 5 * costmodel.PROCESS_CHUNKS_PER_WORKER)
+
+    config.set_active(config.Config(defaults={"pool_size": 6, "chunks": 3}))
+    assert dispatch._sizing(plain, 1000, "thread") == (6, 3)
+
+    # an interpreter that cannot report its core count still has to size a pool
+    config.set_active(config.Config())
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: None)
+    assert dispatch._sizing(plain, 1000, "thread")[0] == 4
+
+
+def test_profitability_weighs_measured_cost_against_dispatch_overhead():
+    plain = _spec_with("calibrate=true")
+    assert dispatch._profitable(plain, 10_000.0, 0, 8, 4, "thread") is False
+    assert dispatch._profitable(plain, 10**9, 1, 8, 4, "thread") is True
+    assert dispatch._profitable(plain, 10_000.0, 10_000, 8, 4, "thread") is True
+    assert dispatch._profitable(plain, 0.001, 10_000, 8, 4, "thread") is False
+
+    # a gain that only ties the overhead is not a gain
+    overhead = costmodel.overhead_ns(4, 10_000, thread=True)
+    tie = overhead / (10_000 * 0.5)
+    assert dispatch._profitable(plain, tie, 10_000, 2, 4, "thread") is False
+    assert dispatch._profitable(plain, tie * 1.001, 10_000, 2, 4, "thread") is True
+
+    # threshold(min_gain=) scales the bar the projected gain has to clear
+    strict = _spec_with("calibrate=threshold(min_gain=1000000.0)")
+    assert dispatch._profitable(strict, 10_000.0, 10_000, 8, 4, "thread") is False
+
+
+def test_block_stats_accumulate_across_runs():
+    # get_block_stats is what --explain and the profile CLI read; every counter
+    # is summed across runs, workers takes the max and backend the last set.
+    src = block(
+        ["ys[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    t_start = time.perf_counter_ns()
+    for _ in range(2):
+        execute(spec, range(n), copy.deepcopy(env), force_backend="thread")
+    elapsed = time.perf_counter_ns() - t_start
+
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["runs"] == 2
+    assert st["parallel_runs"] == 2
+    assert st["sequential_runs"] == 0
+    assert st["chunks"] == 8
+    assert st["workers"] == 2
+    assert st["backend"] == "thread"
+    assert st["fallback_runs"] == 0
+    assert st["interrupted_runs"] == 0
+    assert st["probe_ns"] is None
+    assert 0 < st["duration_ns"] <= elapsed
+
+
+def test_sequential_run_reports_no_workers_and_a_sequential_backend():
+    src = block(["ys[i] = xs[i] * 2"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    n = 50
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    for _ in range(2):
+        execute(spec, range(n), copy.deepcopy(env), force_backend="sequential")
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["sequential_runs"] == 2
+    assert st["parallel_runs"] == 0
+    assert st["chunks"] == 0
+    assert st["workers"] == 0
+    assert st["backend"] == "sequential"
+
+
+@pytest.mark.parametrize("n", [1, 200])
+def test_probe_that_consumes_the_domain_still_rebinds_the_loop_target(monkeypatch, n):
+    # With a single chunk the probe runs every iteration, so the twin that
+    # follows it has nothing left and hands back the SKIP marker instead of a
+    # loop target. The rebind then has to come from the plan. n=1 is the
+    # boundary: the probe consumed one iteration and start is exactly 1.
+    src = block(
+        ["ys[i] = xs[i] + 1"],
+        header="for i in range(len(xs)):",
+        clauses="backend=thread(chunks=1)",
+    )
+    _, spec = build(src)
+    monkeypatch.setattr(dispatch, "_profitable", lambda *a, **k: False)
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    result = execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v + 1 for v in range(n)]
+    assert result == (n - 1,)
+
+
+def test_sequential_reduction_rebinds_every_accumulator():
+    # The twin returns the loop targets first and then one value per rebindable
+    # reduction, so the offset into that tuple decides which name gets which.
+    src = block(
+        ["total += vals[i]", "count += 1"],
+        header="for i in range(len(vals)):",
+        clauses="calibrate=false",
+    )
+    _, spec = build(src)
+    env = {"vals": [1.5] * 100, "total": 2.0, "count": 0}
+    result = execute(spec, range(100), env, force_backend="sequential")
+    assert env["total"] == 152.0
+    assert env["count"] == 100
+    # loop target first, then one value per rebindable reduction in artifact order
+    assert result == (99, 100, 152.0)
+
+
+def test_buffer_direct_after_a_probe_skips_the_chunk_already_written(monkeypatch):
+    # The direct path writes into the caller's buffer, so the chunk the probe
+    # already wrote must be dropped from the work list rather than written twice.
+    src = block(
+        ["ys[i] = xs[i] * 3"],
+        header="for i in range(len(xs)):",
+        clauses="backend=thread(pool_size=2, chunks=4)",
+    )
+    _, spec = build(src)
+    assert spec.artifact.buffer_fast_path, "this block no longer takes the direct path"
+    monkeypatch.setattr(dispatch, "_profitable", lambda *a, **k: True)
+    n = 4000
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    result = execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v * 3 for v in range(n)]
+    assert result == (n - 1,)
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["parallel_runs"] == 1
+    assert st["chunks"] == 3
+    assert st["workers"] == 2
+
+
 def _record(idx: int, error=None) -> _Record:
     return _Record(idx, idx, idx + 1, {}, {}, errors=[], error=error)
 
@@ -628,4 +935,6 @@ def test_interrupt_in_the_join_commits_only_the_completed_prefix(monkeypatch):
     assert committed == list(range(len(committed)))
     assert 0 < len(committed) < n, "the run neither committed a prefix nor left work cancelled"
     assert all(env["seen"][i] == i * 2 for i in committed)
-    assert dispatch.get_block_stats()[spec.key]["interrupted_runs"] == 1
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["interrupted_runs"] == 1
+    assert st["workers"] == 2

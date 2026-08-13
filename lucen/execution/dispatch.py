@@ -42,7 +42,6 @@ _EXTRA_PARAMS = frozenset(
 )
 
 _pool: Optional[ThreadPoolExecutor] = None
-_pool_size = 0
 _pool_lock = threading.Lock()
 _memo_lock = threading.Lock()
 _stats_lock = threading.Lock()
@@ -72,10 +71,9 @@ def _recursion_headroom() -> int:
 
 
 def _ensure_pool(size: int) -> ThreadPoolExecutor:
-    global _pool, _pool_size
+    global _pool
     with _pool_lock:
         if _pool is None:
-            _pool_size = size
             _pool = ThreadPoolExecutor(max_workers=size, thread_name_prefix="lucen")
             atexit.register(shutdown)
         return _pool
