@@ -644,9 +644,9 @@ def _run_buffer_direct(
         with budget, nested_guard.dispatch_scope():
             seq_fn(*args)
 
+    # start is either 0 or a chunk boundary the probe consumed whole, so dropping
+    # the chunks it already wrote leaves the rest aligned; no chunk straddles it
     work = [(a, b) for a, b in bounds if b > start]
-    if work and work[0][0] < start:
-        work[0] = (start, work[0][1])
     futures = _submit_all(pool, lambda _idx, a, b: job(a, b), list(enumerate(work, start=1)), spec)
     try:
         for fut in futures:
