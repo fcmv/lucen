@@ -1094,6 +1094,79 @@ def test_calibrate_true_still_measures():
     assert dispatch.get_block_stats()[spec.key]["probe_ns"] is not None
 
 
+def _collecting_block(max_errors: int, zeros) -> tuple:
+    src = block(
+        ["ys[i] = 100 // xs[i]"],
+        header="for i in range(len(xs)):",
+        clauses=f"calibrate=false, backend=thread(chunks=4), on_error=collect(max_errors={max_errors})",
+    )
+    _, spec = build(src)
+    n = 200
+    xs = [1] * n
+    for z in zeros:
+        xs[z] = 0
+    execute(spec, range(n), {"xs": xs, "ys": [-1] * n}, force_backend="thread")
+    return spec, dispatch.get_collected_errors(spec.key)
+
+
+def test_max_errors_reports_only_once_the_budget_is_passed():
+    # The budget is a ceiling on collected errors, not a target: hitting it
+    # exactly is still within the contract the block asked for.
+    _, at_budget = _collecting_block(2, (13, 150))
+    assert len(at_budget) == 2
+    assert not any(r.error == "MaxErrorsExceeded" for r in get_fallback_report())
+
+    clear_fallback_report()
+    _, over_budget = _collecting_block(2, (13, 90, 150))
+    assert len(over_budget) == 3
+    assert any(
+        r.error == "MaxErrorsExceeded"
+        and r.message.endswith("on_error collect exceeded max_errors=2")
+        for r in get_fallback_report()
+    )
+
+
+def test_chunk_errors_propagate_in_iteration_order():
+    # A dict slab keeps the block off the buffer-direct path, so this is the
+    # chunk-set join deciding which failure the caller sees: the earliest one,
+    # with everything before it committed.
+    src = block(
+        ["seen[i] = 100 // xs[i]"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    xs = [1] * n
+    xs[137] = 0
+    # a different failure later on, so the raised one identifies which record
+    # the join picked rather than only that some chunk failed
+    xs[301] = "not a number"
+    env = {"xs": xs, "seen": {}}
+    with pytest.raises(ZeroDivisionError):
+        execute(spec, range(n), env, force_backend="thread")
+    committed = sorted(env["seen"])
+    assert committed == list(range(137))
+    assert all(env["seen"][i] == 100 for i in committed)
+
+
+def test_buffer_direct_sizes_a_pool_without_a_core_count(monkeypatch):
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: None)
+    src = block(
+        ["ys[i] = xs[i] * 3"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=4)",
+    )
+    _, spec = build(src)
+    assert spec.artifact.buffer_fast_path
+    n = 400
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v * 3 for v in range(n)]
+    assert dispatch._pool._max_workers == 4
+
+
 def _record(idx: int, error=None) -> _Record:
     return _Record(idx, idx, idx + 1, {}, {}, errors=[], error=error)
 
