@@ -960,6 +960,140 @@ def test_dict_slab_run_reports_its_chunks_through_the_join():
     assert st["fallback_runs"] == 0
 
 
+def test_arg_names_root_dotted_targets_and_exclude_generated_ones():
+    # arg_names is the set preflight resolves from the caller's frame, so an
+    # attribute target contributes its root object and nothing generated leaks.
+    src = block(
+        ["acc.total += obj.buf[i]"],
+        header="for i in range(len(obj.buf)):",
+        clauses="calibrate=false",
+    )
+    _, spec = build(src)
+    assert "obj" in spec.arg_names
+    assert "acc" in spec.arg_names
+    assert not [n for n in spec.arg_names if "." in n or n.startswith("_plx")]
+
+
+def test_arg_names_keep_the_sequence_domain_parameters_out():
+    # a non-range domain adds _plx_seq to the chunk signature; it is generated,
+    # so it must not join the names preflight resolves from the caller
+    src = block(["ys[i] = i"], header="for i, v in enumerate(items):", clauses="calibrate=false")
+    _, spec = build(src)
+    assert "_plx_seq" in spec.artifact.params
+    assert spec.arg_names == ("ys",)
+
+
+def test_grainsize_comes_from_the_clause_or_falls_back_to_the_default():
+    assert _spec_with("calibrate=false").grainsize == 1024
+    assert _spec_with("calibrate=false, grainsize=8").grainsize == 8
+
+
+def test_a_record_is_sized_by_the_width_of_its_chunk():
+    src = block(["total += xs[i]"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    plan = _plan_domain(spec.artifact, range(10))
+    record = dispatch._new_record(spec, plan, 1, 2, 6)
+    assert all(len(slab) == 4 for slab in record.slabs.values())
+    assert all(len(site) == 4 for site in record.sites.values())
+
+
+@pytest.mark.parametrize("span,expected", [((3, 4), 6400.0), ((2, 6), 1600.0)])
+def test_twin_probe_also_reports_nanoseconds_per_iteration(monkeypatch, span, expected):
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):")
+    _, spec = build(src)
+    assert dispatch._twin_probe_ok(spec)
+    env = {"xs": list(range(8)), "ys": [0] * 8}
+    plan = _plan_domain(spec.artifact, range(8))
+    ticks = iter([1_000, 7_400])
+    monkeypatch.setattr(time, "perf_counter_ns", lambda: next(ticks))
+    assert dispatch._probe_twin(spec, plan, span, env, None) == expected
+
+
+def test_unprofitable_reports_name_whether_the_cost_was_measured():
+    spec = _spec_with("calibrate=false")
+    dispatch._handle_unprofitable(spec, None)
+    dispatch._handle_unprofitable(spec, 42.4)
+    messages = [r.message for r in get_fallback_report() if r.error == "PARALLEL_UNPROFITABLE"]
+    assert any(
+        m.endswith(
+            "statically predicted to lose to dispatch overhead; ran SEQUENTIAL "
+            "(calibrate=false overrides, spec 5.17)"
+        )
+        for m in messages
+    )
+    assert any(
+        m.endswith(
+            "measured ~42 ns/iteration loses to dispatch overhead; ran SEQUENTIAL "
+            "(calibrate=false overrides, spec 5.17)"
+        )
+        for m in messages
+    )
+
+
+def test_strict_and_on_fallback_promote_an_unprofitable_block_to_an_error():
+    from lucen.support.errors import UnprofitableParallelismError
+
+    with pytest.raises(UnprofitableParallelismError):
+        dispatch._handle_unprofitable(_spec_with("calibrate=false, strict=true"), 10.0)
+    with pytest.raises(UnprofitableParallelismError):
+        dispatch._handle_unprofitable(_spec_with("calibrate=false, on_fallback=hard"), 10.0)
+    # both gates name the reason, so allowing it keeps the block on the report
+    # path rather than promoting it
+    dispatch._handle_unprofitable(
+        _spec_with("calibrate=false, strict=true(allow=[unprofitable])"), 10.0
+    )
+    dispatch._handle_unprofitable(
+        _spec_with("calibrate=false, on_fallback=hard(allow=[unprofitable])"), 10.0
+    )
+    assert any(r.error == "PARALLEL_UNPROFITABLE" for r in get_fallback_report())
+
+
+def test_progress_true_prints_each_chunk_to_stderr(capsys):
+    src = block(
+        ["ys[i] = xs[i] + 1"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, progress=true, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    execute(spec, range(n), {"xs": list(range(n)), "ys": [0] * n}, force_backend="thread")
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("lucen: ")]
+    assert lines == [f"lucen: t.py:1: {k}/{n} iterations" for k in (100, 200, 300, 400)]
+
+
+def test_progress_false_prints_nothing(capsys):
+    src = block(
+        ["ys[i] = xs[i] + 1"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, progress=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    execute(spec, range(n), {"xs": list(range(n)), "ys": [0] * n}, force_backend="thread")
+    assert "iterations" not in capsys.readouterr().err
+
+
+def test_timeout_clamps_only_above_the_ceiling():
+    config.set_active(config.Config(max_timeout_seconds=5.0))
+    at_ceiling = _spec_with("calibrate=false, timeout=5.0")
+    before = time.monotonic()
+    assert dispatch._deadline(at_ceiling) >= before + 5.0
+    assert not any(r.error == "LimitClamp" for r in get_fallback_report())
+
+    dispatch._deadline(_spec_with("calibrate=false, timeout=30"))
+    assert any(
+        r.error == "LimitClamp" and r.message.startswith("timeout=") for r in get_fallback_report()
+    )
+
+
+def test_calibrate_true_still_measures():
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses="calibrate=true")
+    _, spec = build(src)
+    n = 300
+    execute(spec, range(n), {"xs": list(range(n)), "ys": [0] * n}, force_backend="thread")
+    assert dispatch.get_block_stats()[spec.key]["probe_ns"] is not None
+
+
 def _record(idx: int, error=None) -> _Record:
     return _Record(idx, idx, idx + 1, {}, {}, errors=[], error=error)
 
