@@ -9,7 +9,7 @@ import time
 import pytest
 
 from lucen.analysis.rewriter import analyze_source
-from lucen.analysis.scanner import scan_source
+from lucen.analysis.scanner import ClauseValue, scan_source
 from lucen.analysis.selector import select
 from lucen.codegen import generate
 from lucen.execution import dispatch, nested_guard, preflight
@@ -99,7 +99,14 @@ def test_worker_exhaustion_falls_back_instead_of_crashing():
     finally:
         pool.submit = original
     assert got["ys"] == [v * 2 for v in range(40)]
-    assert any(r.error == "PreflightCheckError" for r in get_fallback_report())
+    assert any(
+        r.error == "PreflightCheckError"
+        and r.message.endswith(
+            "could not start a worker for every chunk "
+            "(RuntimeError: can't start new thread); ran SEQUENTIAL"
+        )
+        for r in get_fallback_report()
+    )
     st = dispatch.get_block_stats()[spec.key]
     assert st["sequential_runs"] == 1
     assert st["fallback_runs"] == 1
@@ -609,6 +616,7 @@ def test_generated_parameters_resolve_to_their_runtime_values():
     assert bound["_plx_clock"] is time.monotonic
     assert bound["_plx_deadline"] == 123.0
     assert isinstance(bound["_plx_timeout_error"], ParallelTimeoutError)
+    assert bound["_plx_timeout_error"].args[0].endswith("per-iteration timeout= deadline exceeded")
     assert bound["_plx_progress"] is gate.progress_cb
     for slab_plan in spec.artifact.slabs:
         assert bound[slab_plan.param] is record.slabs[slab_plan.param]
@@ -670,6 +678,7 @@ def test_calibration_memo_expires_by_use_count_and_regime_change():
     dispatch._memo[spec.key] = (500.0, 1000, 0)
     assert dispatch._memo_lookup(spec, 1000 * factor) == 500.0
     assert dispatch._memo_lookup(spec, 1000 * factor + 1) is None
+    assert dispatch._memo_lookup(spec, 1000 // factor) == 500.0
     assert dispatch._memo_lookup(spec, 1000 // factor - 1) is None
 
 
@@ -989,10 +998,15 @@ def test_grainsize_comes_from_the_clause_or_falls_back_to_the_default():
 
 
 def test_a_record_is_sized_by_the_width_of_its_chunk():
-    src = block(["total += xs[i]"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    src = block(
+        ["ys[i] = xs[i]", "total += xs[i]"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false",
+    )
     _, spec = build(src)
     plan = _plan_domain(spec.artifact, range(10))
     record = dispatch._new_record(spec, plan, 1, 2, 6)
+    assert record.slabs and record.sites
     assert all(len(slab) == 4 for slab in record.slabs.values())
     assert all(len(site) == 4 for site in record.sites.values())
 
@@ -1165,6 +1179,197 @@ def test_buffer_direct_sizes_a_pool_without_a_core_count(monkeypatch):
     execute(spec, range(n), env, force_backend="thread")
     assert env["ys"] == [v * 3 for v in range(n)]
     assert dispatch._pool._max_workers == 4
+
+
+def test_bounds_tile_the_domain_without_a_gap_or_an_overlap():
+    from lucen.execution.planning import _bounds
+
+    assert _bounds(10, 1) == [(0, 10)]
+    assert _bounds(10, 4) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+    assert _bounds(0, 4) == []
+
+
+def test_a_fresh_record_carries_no_error_and_no_exit():
+    record = _Record(1, 0, 4, {}, {}, errors=[])
+    assert record.error is None
+    assert record.exit_pos is None
+
+
+@pytest.mark.parametrize("name", ["thread", "process", "sequential"])
+def test_an_explicit_backend_clause_is_recognised(name):
+    # backend=sequential leaves the block unparallelized, so there is no
+    # artifact to build one from; the clause is substituted instead.
+    spec = _spec_with("calibrate=false, backend=thread")
+    spec.clauses["backend"] = ClauseValue(raw=name, kind="name", value=name)
+    assert dispatch._explicit_backend(spec) == name
+    assert dispatch._pick_backend(spec) == name
+
+
+def test_an_unknown_backend_name_is_not_treated_as_explicit():
+    spec = _spec_with("calibrate=false, backend=thread")
+    spec.clauses["backend"] = ClauseValue(raw="teleport", kind="name", value="teleport")
+    assert dispatch._explicit_backend(spec) is None
+
+
+def test_twin_probe_is_refused_for_a_dict_slab():
+    # The twin writes straight into env, which a dict slab cannot undo, so the
+    # chunk probe is the only safe one for it.
+    src = block(["seen[key] = key"], header="for key in keys:", clauses="calibrate=false")
+    _, spec = build(src)
+    assert dispatch._twin_probe_ok(spec) is False
+
+
+def test_a_name_is_read_from_env_then_module_globals_then_builtins():
+    assert dispatch._value_of("k", {"k": 1}, {"k": 2}) == 1
+    assert dispatch._value_of("k", {}, {"k": 2}) == 2
+    assert dispatch._value_of("len", {}, {}) is len
+
+
+def test_arg_names_root_a_dotted_slab_container():
+    src = block(
+        ["obj.buf[i] = xs[i] * 2"], header="for i in range(len(xs)):", clauses="calibrate=false"
+    )
+    _, spec = build(src)
+    assert [p.container for p in spec.artifact.slabs] == ["obj.buf"]
+    assert spec.arg_names == ("obj", "xs")
+
+
+def test_wavefront_process_default_explains_why_it_ran_sequentially(monkeypatch):
+    monkeypatch.setattr(dispatch, "free_threaded", lambda: False)
+    src = block(["out[i] = out[i // 2] + w[i]"], clauses="calibrate=false")
+    _, spec = build(src)
+    env = {"n": 2048, "out": [1] + [0] * 2047, "w": list(range(2048))}
+    execute(spec, range(1, 2048), env, force_backend=None)
+    assert any(
+        r.error == "WavefrontSequentialDefault"
+        and r.message.endswith(
+            "recognized-DAG wavefront runs SEQUENTIAL by default (PROCESS per-level "
+            "dispatch is slower; force backend=thread to run the wavefront on a "
+            "free-threaded build, spec 5.6)"
+        )
+        for r in get_fallback_report()
+    )
+
+
+def test_a_wavefront_that_refuses_mid_run_falls_back_and_is_counted(monkeypatch):
+    # The wavefront can refuse after dispatch has begun; the block then has to
+    # re-run sequentially, surface the reason it refused, and count one fallback.
+    from lucen.execution import wavefront
+    from lucen.support.errors import PreflightCheckError
+
+    src = block(
+        ["out[i] = out[i // 2] + w[i]"], clauses="calibrate=false, backend=thread, grainsize=8"
+    )
+    _, spec = build(src)
+
+    def refuse(*_args, **_kwargs):
+        raise PreflightCheckError("wavefront refused mid run", file="t.py", line=1)
+
+    monkeypatch.setattr(wavefront, "execute_wavefront", refuse)
+    n = 2048
+    env = {"n": n, "out": [1] + [0] * (n - 1), "w": list(range(n))}
+    execute(spec, range(1, n), env, force_backend="thread")
+
+    golden_env = {"n": n, "out": [1] + [0] * (n - 1), "w": list(range(n))}
+    exec(src, golden_env)
+    assert env["out"] == golden_env["out"]
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["sequential_runs"] == 1
+    assert st["fallback_runs"] == 1
+    assert any(
+        r.error == "PreflightCheckError" and r.message.endswith("wavefront refused mid run")
+        for r in get_fallback_report()
+    )
+
+
+def test_a_chunk_set_that_cannot_start_its_workers_is_counted_once(monkeypatch):
+    # A dict slab keeps the block off the buffer-direct path, so this is the
+    # chunk-set half of the same worker-exhaustion fallback.
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: None)
+    src = block(
+        ["seen[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    pool = dispatch._ensure_pool(4)
+    assert pool._max_workers == 4
+    original, calls = pool.submit, []
+
+    def exhausted(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 2:
+            raise RuntimeError("can't start new thread")
+        return original(*args, **kwargs)
+
+    pool.submit = exhausted
+    env = {"xs": list(range(n)), "seen": {}}
+    try:
+        execute(spec, range(n), env, force_backend="thread")
+    finally:
+        pool.submit = original
+    assert env["seen"] == {i: i * 2 for i in range(n)}
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["sequential_runs"] == 1
+    assert st["fallback_runs"] == 1
+
+
+def test_a_failure_cancels_the_queued_tail_and_commits_the_prefix(monkeypatch):
+    # FIRST_EXCEPTION returns while chunks are still queued. Those are cancelled
+    # and the ones already running are settled before anything is committed, so
+    # the caller still sees a gapless prefix.
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: 2)
+    src = block(
+        ["seen[i] = pace(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=16), trust=callables",
+    )
+    _, spec = build(src)
+    n = 160
+    ran: list = []
+
+    def pace(v):
+        ran.append(v)
+        if v == 3:
+            raise ZeroDivisionError("chunk one")
+        if v >= 10:
+            time.sleep(0.02)
+        return v * 2
+
+    env = {"xs": list(range(n)), "seen": {}, "pace": pace}
+    with pytest.raises(ZeroDivisionError):
+        execute(spec, range(n), env, force_backend="thread")
+
+    assert len(ran) < n, "nothing was cancelled, so the queued tail never existed"
+    # the failing chunk is the first, so the committed prefix is exactly the
+    # iterations it completed before raising
+    assert sorted(env["seen"]) == [0, 1, 2]
+    assert all(env["seen"][i] == i * 2 for i in env["seen"])
+
+
+def test_probe_measures_only_what_is_left_to_run(monkeypatch):
+    # The gate is asked about the remaining iterations, not the whole domain;
+    # counting the probed chunk twice would inflate the projected gain.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):")
+    _, spec = build(src)
+    seen: list = []
+
+    def record_remaining(spec_, t_ns, remaining, workers, n_chunks, backend):
+        seen.append(remaining)
+        return False
+
+    monkeypatch.setattr(dispatch, "_profitable", record_remaining)
+    n = 400
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    execute(spec, range(n), env, force_backend="thread")
+    assert seen, "the gate was never consulted"
+    probed = dispatch.get_block_stats()[spec.key]["chunks"]
+    assert seen[0] < n, f"remaining {seen[0]} is not smaller than the domain {n}"
+    assert env["ys"] == [v + 1 for v in range(n)]
+    assert probed == 0
 
 
 def _record(idx: int, error=None) -> _Record:
