@@ -100,7 +100,9 @@ def test_worker_exhaustion_falls_back_instead_of_crashing():
         pool.submit = original
     assert got["ys"] == [v * 2 for v in range(40)]
     assert any(r.error == "PreflightCheckError" for r in get_fallback_report())
-    assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["sequential_runs"] == 1
+    assert st["fallback_runs"] == 1
 
 
 def test_interrupt_drains_workers_before_unwinding():
@@ -375,7 +377,11 @@ def test_nested_guard_forces_sequential():
     assert env["ys"] == golden(src, {"xs": env["xs"], "ys": [0] * 2000})["ys"]
     stats = dispatch.get_block_stats()[spec.key]
     assert stats["sequential_runs"] == 1
-    assert any(r.error == "NestedParallelRegion" for r in get_fallback_report())
+    assert any(
+        r.error == "NestedParallelRegion"
+        and r.message.endswith("nested parallel region: inner block runs SEQUENTIAL (spec 5.11)")
+        for r in get_fallback_report()
+    )
 
 
 def test_wavefront_dag_equivalence():
@@ -566,7 +572,9 @@ def test_preflight_refusal_falls_back_sequentially():
     p, _, spec = run(src, env)
     assert p["ys"] == golden(src, env)["ys"]
     assert any(r.error == "PreflightCheckError" for r in get_fallback_report())
-    assert dispatch.get_block_stats()[spec.key]["sequential_runs"] == 1
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["sequential_runs"] == 1
+    assert st["fallback_runs"] == 1
 
 
 _INSTRUMENTED = (
@@ -821,6 +829,135 @@ def test_buffer_direct_after_a_probe_skips_the_chunk_already_written(monkeypatch
     assert st["parallel_runs"] == 1
     assert st["chunks"] == 3
     assert st["workers"] == 2
+
+
+def test_recursion_headroom_exactly_at_the_floor_still_parallelizes(monkeypatch):
+    # The floor is the smallest headroom dispatch will run under, not the
+    # largest it refuses at.
+    src = block(["ys[i] = xs[i] * 2"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    monkeypatch.setattr(dispatch, "_recursion_headroom", lambda: dispatch._MIN_RECURSION_HEADROOM)
+    n = 400
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v * 2 for v in range(n)]
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["parallel_runs"] == 1
+    assert not any(r.error == "RecursionHeadroom" for r in get_fallback_report())
+
+
+def test_low_recursion_headroom_names_the_floor_it_wants():
+    src = block(["ys[i] = xs[i] * 2"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    env = {"xs": list(range(200)), "ys": [0] * 200}
+    limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(60)
+        execute(spec, range(200), env, force_backend="thread")
+    finally:
+        sys.setrecursionlimit(limit)
+    assert any(
+        r.error == "RecursionHeadroom"
+        and r.message.endswith(
+            f"recursion headroom below {dispatch._MIN_RECURSION_HEADROOM} frames "
+            "(sys.setrecursionlimit); parallel machinery needs more, ran SEQUENTIAL"
+        )
+        for r in get_fallback_report()
+    )
+
+
+def test_calibrate_always_probes_even_a_block_it_has_measured():
+    # auto consults the memo first; always is the mode that re-measures, so it
+    # has to reach the probe on every run.
+    src = block(
+        ["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses="calibrate=always"
+    )
+    _, spec = build(src)
+    n = 300
+    env = {"xs": list(range(n)), "ys": [0] * n}
+    execute(spec, range(n), env, force_backend="thread")
+    assert env["ys"] == [v + 1 for v in range(n)]
+    assert dispatch.get_block_stats()[spec.key]["probe_ns"] is not None
+
+
+def test_a_calibrate_false_default_overrides_the_static_prediction():
+    # The literal clause skips the static screen during selection, but a default
+    # from lucen.toml does not: the block is still marked unprofitable and the
+    # mode is what has to override it at dispatch.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(20):")
+    _, spec = build(src)
+    assert spec.static_unprofitable, "this block is no longer statically screened out"
+    config.set_active(config.Config(defaults={"calibrate": "false"}))
+    # selection already reported the static prediction; only a second report
+    # from dispatch would mean the override did not take
+    clear_fallback_report()
+    env = {"xs": list(range(20)), "ys": [0] * 20}
+    execute(spec, range(20), env, force_backend="thread")
+    assert env["ys"] == [v + 1 for v in range(20)]
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["parallel_runs"] == 1
+    assert not any(r.error == "PARALLEL_UNPROFITABLE" for r in get_fallback_report())
+
+
+def test_ft_promotion_takes_the_threshold_inclusively(monkeypatch):
+    _, spec = build(block(["ys[i] = big(xs[i])"], header="for i in range(len(xs)):"))
+    n = 2000
+    monkeypatch.setattr(dispatch, "free_threaded", lambda: True)
+    dispatch._memo[spec.key] = (float(costmodel.FT_THREAD_MIN_NS), n, 0)
+    env = {"xs": list(range(n)), "ys": [0] * n, "big": lambda v: v * 2 + 1}
+    execute(spec, range(n), env)
+    assert env["ys"] == [v * 2 + 1 for v in range(n)]
+    assert dispatch.get_block_stats()[spec.key]["backend"] == "thread"
+
+
+def test_dict_audit_still_fires_when_a_list_slab_shares_the_block():
+    # The audit walks every slab plan and skips the non-dict ones. A block that
+    # writes both kinds must still have its dict half audited.
+    src = block(
+        ["ys[i] = i * 2", "seen[key] = i"],
+        header="for i, key in enumerate(keys):",
+        clauses="calibrate=false",
+    )
+    _, spec = build(src)
+    kinds = [sp.kind for sp in spec.artifact.slabs]
+    assert "list" in kinds and "dict" in kinds
+    env = {"keys": ["a", "b", "c", "d", "a", "e", "f", "g"], "ys": [0] * 8, "seen": {}}
+    got, _, _ = run(src, env)
+    assert got["seen"] == golden(src, env)["seen"]
+    assert any(r.error == "ParallelWriteConflictError" for r in get_fallback_report())
+
+
+def test_write_conflict_report_names_the_container_and_key():
+    src = block(["seen[key] = key * 2"], header="for key in keys:", clauses="calibrate=false")
+    env = {"keys": ["a", "b", "c", "d", "a", "e", "f", "g"], "seen": {}}
+    run(src, env)
+    assert any(
+        r.error == "ParallelWriteConflictError"
+        and r.message.endswith(
+            "chunks wrote 'seen['a']' more than once; discarding the parallel "
+            "attempt and re-running sequentially"
+        )
+        for r in get_fallback_report()
+    )
+
+
+def test_dict_slab_run_reports_its_chunks_through_the_join():
+    # The dict slab keeps the block off the buffer-direct path, so this is the
+    # accounting the join itself does.
+    src = block(
+        ["seen[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    env = {"xs": list(range(n)), "seen": {}}
+    for _ in range(2):
+        execute(spec, range(n), copy.deepcopy(env), force_backend="thread")
+    st = dispatch.get_block_stats()[spec.key]
+    assert st["parallel_runs"] == 2
+    assert st["chunks"] == 8
+    assert st["fallback_runs"] == 0
 
 
 def _record(idx: int, error=None) -> _Record:
