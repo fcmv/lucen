@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A marked block calling `open()` is downgraded to sequential, as the purity
+  contract always intended. `builtins.open` reports `__module__ == "io"`, so the
+  `open` entry in the impure-builtin set never matched and a block reading or
+  writing a file kept its parallel routing. The match is now on the object the
+  name resolves to. Every other name in the set behaves as before.
+
+### Internal
+
+- The nightly mutation job mutates both accel modes. Pinning
+  `LUCEN_DISABLE_NATIVE` made the accelerated half dead code, so every mutant of
+  `_accel.py` and of the accelerated branch in `audit_disjoint_dict_slabs`
+  reported as a survivor no test could have killed. A mutant is a real survivor
+  only where it survived in both lanes.
+- The interrupt teardown, the calibration chunk probe, the commit prefix, the
+  SKIP marker, the buffer slice store and the paths a probe leaves behind are
+  covered. `_Plan.element_at` had never run, because `early_exit` carried a
+  byte-identical private copy that shadowed it; the copy is gone. `_pool_size`
+  was assigned in two places and read in none, and is gone.
+
 ## [1.2.0] - 2026-08-12
 
 Comprehensions join the loop as a markable construct. A `# LUCEN START` pair
