@@ -79,19 +79,34 @@ jobs:
           path: bench-current.json
 
   # Mutation testing on the correctness core: inject one change per mutant and
-  # check the suite kills it. It runs on the pure-Python path (native disabled)
-  # so the fallback code is exercised rather than shadowed by the native core,
-  # and against the source (editable install) so mutants are actually seen. Non
-  # gating and time bounded; survivors (mutations no test killed) are uploaded
-  # for triage. Some survivors are equivalent mutants, so the report is a review
-  # queue, not a score to defend.
+  # check the suite kills it. It runs against the source (editable install) so
+  # mutants are actually seen. Non gating and time bounded; survivors (mutations
+  # no test killed) are uploaded for triage. Some survivors are equivalent
+  # mutants, so the report is a review queue, not a score to defend.
+  #
+  # Both accel modes are mutated, because pinning one makes the other dead code:
+  # under LUCEN_DISABLE_NATIVE every mutant of _accel.py and of the accelerated
+  # branch in audit_disjoint_dict_slabs reports as a survivor no test could ever
+  # have killed. A mutant is only a real survivor if it survived in both lanes,
+  # so triage intersects the two artifacts. The lanes run in parallel, which
+  # keeps each one inside the same budget the single lane had.
   mutation:
-    name: mutation testing (survivors report)
+    name: mutation testing (${{ matrix.mode }})
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: fallback
+            disable_native: "1"
+            accelerated: "False"
+          - mode: native
+            disable_native: ""
+            accelerated: "True"
     env:
-      LUCEN_DISABLE_NATIVE: "1"
+      LUCEN_DISABLE_NATIVE: ${{ matrix.disable_native }}
       PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v4
@@ -104,6 +119,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin pytest hypothesis "mutmut==2.5.1"
           pip install -e .
+      # A native lane that silently fell back would report the whole accelerated
+      # half as survivors, which is the failure this matrix exists to prevent.
+      - name: Confirm the lane is in the accel mode it claims
+        run: |
+          python - <<'PY'
+          from lucen.execution import _accel
+          expected = ${{ matrix.accelerated }}
+          assert _accel.ACCELERATED is expected, (
+              f"lane wanted ACCELERATED={expected}, got {_accel.ACCELERATED}"
+          )
+          PY
       - name: Mutate the correctness core and kill mutants with the suite
         run: |
           timeout 150m mutmut run \
@@ -113,9 +139,9 @@ jobs:
             --no-progress --CI || true
       - name: Survivors report
         if: always()
-        run: mutmut results | tee mutation-survivors.txt || true
+        run: mutmut results | tee mutation-survivors-${{ matrix.mode }}.txt || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutation-survivors
-          path: mutation-survivors.txt
+          name: mutation-survivors-${{ matrix.mode }}
+          path: mutation-survivors-${{ matrix.mode }}.txt
