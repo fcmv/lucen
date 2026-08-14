@@ -1112,7 +1112,9 @@ def _collecting_block(max_errors: int, zeros) -> tuple:
     src = block(
         ["ys[i] = 100 // xs[i]"],
         header="for i in range(len(xs)):",
-        clauses=f"calibrate=false, backend=thread(chunks=4), on_error=collect(max_errors={max_errors})",
+        clauses=(
+            f"calibrate=false, backend=thread(chunks=4), on_error=collect(max_errors={max_errors})"
+        ),
     )
     _, spec = build(src)
     n = 200
