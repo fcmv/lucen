@@ -253,6 +253,108 @@ def test_fold_over_no_sites_returns_the_accumulator():
     assert fold_contributions(7, [], "+") == 7
 
 
+def test_the_unhandled_sentinel_is_distinct_from_none():
+    # a fold over user objects may legally produce None, so "the native core did
+    # not handle this" cannot itself be None
+    assert _accel.UNHANDLED is not None
+
+
+def test_the_accel_import_guard_honours_the_environment(monkeypatch):
+    # The guard runs at import, so each branch is reached by reloading the
+    # module. The lane's own state is put back at the end.
+    import importlib
+    import sys
+
+    was_native, was_accelerated = _accel._native, _accel.ACCELERATED
+    try:
+        monkeypatch.setenv("LUCEN_DISABLE_NATIVE", "1")
+        importlib.reload(_accel)
+        assert _accel._native is None
+        assert _accel.ACCELERATED is False
+
+        # keyed off whether the core actually imported, not off the flag under
+        # test, so the flag cannot vouch for itself
+        monkeypatch.delenv("LUCEN_DISABLE_NATIVE", raising=False)
+        importlib.reload(_accel)
+        if _accel._native is not None:
+            assert _accel.ACCELERATED is True
+
+        # a build without the compiled core degrades instead of failing to
+        # import; the parent attribute has to go too, since "from lucen import
+        # _core" resolves that before it consults sys.modules
+        import lucen
+
+        monkeypatch.delattr(lucen, "_core", raising=False)
+        monkeypatch.setitem(sys.modules, "lucen._core", None)
+        importlib.reload(_accel)
+        assert _accel._native is None
+        assert _accel.ACCELERATED is False
+    finally:
+        monkeypatch.undo()
+        importlib.reload(_accel)
+    assert _accel._native is was_native
+    assert _accel.ACCELERATED is was_accelerated
+
+
+_FOLD_IDENTITY = {"+": 0, "*": 1, "&": 0b111, "|": 0, "^": 0, "min": 10**9, "max": -(10**9)}
+
+
+@pytest.mark.parametrize("op", ["+", "*", "&", "|", "^", "min", "max"])
+def test_every_advertised_fold_op_reaches_the_native_core(op):
+    # Dropping an op from the accelerated set is invisible in the result, since
+    # the Python twin computes the same value; only which path ran differs.
+    if not _accel.ACCELERATED:
+        pytest.skip("native core not loaded")
+    got = _accel.fold_ordered(_FOLD_IDENTITY[op], [[3, 1, 2]], op, SKIP)
+    assert got is not _accel.UNHANDLED
+    assert got == _py_fold(_FOLD_IDENTITY[op], [[3, 1, 2]], op)
+
+
+def test_the_native_fold_declines_what_it_cannot_handle():
+    import array
+
+    assert _accel.fold_ordered(0, [], "+", SKIP) is _accel.UNHANDLED
+    assert _accel.fold_ordered(0, [[1, 2]], "concat", SKIP) is _accel.UNHANDLED
+    assert _accel.fold_ordered(0, [[1, 2]], lambda a, b: a + b, SKIP) is _accel.UNHANDLED
+    assert _accel.fold_ordered(0, [array.array("i", [1, 2])], "+", SKIP) is _accel.UNHANDLED
+
+
+def test_integer_keyed_slabs_take_the_bitmap_audit(monkeypatch):
+    # The bitmap audit is the measured fast path for index-like dict keys, and
+    # it is only correct when every key is an int inside the container's length.
+    if not _accel.ACCELERATED:
+        pytest.skip("native core not loaded")
+    from lucen.execution.runtime import audit_disjoint_dict_slabs
+
+    seen: list = []
+    real = _accel.audit_index_bitmap
+
+    def spy(key_lists, length):
+        seen.append(length)
+        return real(key_lists, length)
+
+    monkeypatch.setattr(_accel, "audit_index_bitmap", spy)
+    assert audit_disjoint_dict_slabs([{0: "a", 1: "b"}, {2: "c"}], index_bound=4) is None
+    assert seen == [4], "the bitmap path was not taken for integer keys"
+    assert audit_disjoint_dict_slabs([{0: "a"}, {0: "b"}], index_bound=4) == 0
+
+
+def test_keys_outside_the_bitmap_domain_fall_back_to_the_set_audit(monkeypatch):
+    # A key at the bound is out of range for a bitmap of that length, and a
+    # non-integer key is not an index at all; both must reach the set audit
+    # rather than be handed to the bitmap.
+    if not _accel.ACCELERATED:
+        pytest.skip("native core not loaded")
+    from lucen.execution.runtime import audit_disjoint_dict_slabs
+
+    seen: list = []
+    monkeypatch.setattr(_accel, "audit_index_bitmap", lambda *args: seen.append(args))
+    assert audit_disjoint_dict_slabs([{4: "x"}], index_bound=4) is None
+    assert audit_disjoint_dict_slabs([{"a": 1}], index_bound=4) is None
+    assert audit_disjoint_dict_slabs([{"a": 1}, {"a": 2}], index_bound=4) == "a"
+    assert seen == []
+
+
 def test_skip_is_a_singleton_with_a_stable_marker():
     # SKIP marks an iteration that wrote nothing, so it has to stay
     # distinguishable from every value a chunk could legitimately produce, and
