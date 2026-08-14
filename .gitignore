@@ -12,6 +12,11 @@ venv/
 # Rust (lucen_core, from Phase 9)
 target/
 
+# The built native core, copied into the package for local development
+lucen/_core.*.so
+lucen/_core.pyd
+lucen/_core.so
+
 # Lucen artifacts
 .lucen_cache/
 .lucen_baseline.json
