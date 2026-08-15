@@ -1386,6 +1386,286 @@ def test_probe_measures_only_what_is_left_to_run(monkeypatch):
     assert probed == 0
 
 
+def _twice_into_one_dict(spec, iterable, env_factory, backend="thread"):
+    """Run the block twice through the same stats dict and hand it back.
+
+    _merge_stats accumulates a run's counters into the aggregate under the lock,
+    which is only correct if each counter accumulates into the dict it is given
+    rather than overwriting it. A run that assigns looks identical while its
+    dict is fresh, so the contract is only visible when one dict sees two runs.
+    """
+    stats = dispatch._fresh_stats()
+    for _ in range(2):
+        dispatch._execute(spec, iterable, env_factory(), None, backend, stats)
+    return stats
+
+
+def test_a_preflight_refusal_accumulates_its_fallback():
+    src = block(
+        ["ys[i] = xs[i] + 1"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, reduce=custom(fn=nope.missing, identity=0)",
+    )
+    _, spec = build(src)
+    n = 50
+    stats = _twice_into_one_dict(spec, range(n), lambda: {"xs": list(range(n)), "ys": [0] * n})
+    assert stats["fallback_runs"] == 2
+    assert stats["sequential_runs"] == 2
+
+
+def test_a_parallel_join_accumulates_its_chunks():
+    src = block(
+        ["seen[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 400
+    stats = _twice_into_one_dict(spec, range(n), lambda: {"xs": list(range(n)), "seen": {}})
+    assert stats["parallel_runs"] == 2
+    assert stats["chunks"] == 8
+
+
+def test_the_buffer_direct_path_accumulates_its_chunks():
+    src = block(
+        ["ys[i] = xs[i] * 3"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=4)",
+    )
+    _, spec = build(src)
+    assert spec.artifact.buffer_fast_path
+    n = 400
+    stats = _twice_into_one_dict(spec, range(n), lambda: {"xs": list(range(n)), "ys": [0] * n})
+    assert stats["parallel_runs"] == 2
+    assert stats["chunks"] == 8
+
+
+def test_a_write_conflict_accumulates_its_fallback():
+    src = block(["seen[key] = key * 2"], header="for key in keys:", clauses="calibrate=false")
+    _, spec = build(src)
+    keys = ["a", "b", "c", "d", "a", "e", "f", "g"]
+    stats = _twice_into_one_dict(spec, keys, lambda: {"keys": keys, "seen": {}})
+    assert stats["fallback_runs"] == 2
+    assert stats["sequential_runs"] == 2
+
+
+def test_a_wavefront_refusal_accumulates_its_fallback(monkeypatch):
+    from lucen.execution import wavefront
+    from lucen.support.errors import PreflightCheckError
+
+    def refuse(*_args, **_kwargs):
+        raise PreflightCheckError("wavefront refused mid run", file="t.py", line=1)
+
+    monkeypatch.setattr(wavefront, "execute_wavefront", refuse)
+    src = block(
+        ["out[i] = out[i // 2] + w[i]"], clauses="calibrate=false, backend=thread, grainsize=8"
+    )
+    _, spec = build(src)
+    n = 2048
+    stats = _twice_into_one_dict(
+        spec,
+        range(1, n),
+        lambda: {"n": n, "out": [1] + [0] * (n - 1), "w": list(range(n))},
+    )
+    assert stats["fallback_runs"] == 2
+    assert stats["sequential_runs"] == 2
+
+
+@pytest.mark.parametrize(
+    "body,container", [("ys[i] = xs[i] * 2", "list"), ("seen[i] = xs[i]", "dict")]
+)
+def test_worker_exhaustion_accumulates_on_both_dispatch_paths(monkeypatch, body, container):
+    # The direct-write path and the chunk-set path each count their own
+    # fallback, and a list slab picks the first while a dict slab picks the
+    # second.
+    src = block(
+        [body],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4)",
+    )
+    _, spec = build(src)
+    n = 200
+    pool = dispatch._ensure_pool(4)
+    original, calls = pool.submit, []
+
+    def exhausted(*args, **kwargs):
+        calls.append(1)
+        if len(calls) % 3 == 0:
+            raise RuntimeError("can't start new thread")
+        return original(*args, **kwargs)
+
+    pool.submit = exhausted
+    try:
+        stats = _twice_into_one_dict(
+            spec,
+            range(n),
+            lambda: {"xs": list(range(n)), "ys": [0] * n, "seen": {}},
+        )
+    finally:
+        pool.submit = original
+    assert stats["fallback_runs"] == 2
+    assert stats["sequential_runs"] == 2
+
+
+def test_the_run_duration_is_measured_from_the_start_of_the_block(monkeypatch):
+    # A stats dict starts at zero, so the recorded duration is exactly the
+    # elapsed span and not the span plus a seed.
+    src = block(["ys[i] = xs[i] + 1"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    ticks = iter([1_000, 5_000])
+    monkeypatch.setattr(time, "perf_counter_ns", lambda: next(ticks))
+    n = 50
+    execute(spec, range(n), {"xs": list(range(n)), "ys": [0] * n}, force_backend="sequential")
+    assert dispatch.get_block_stats()[spec.key]["duration_ns"] == 4_000
+
+
+def test_the_free_threaded_promotion_reaches_the_cost_model(monkeypatch):
+    # The promotion has to change the backend the rest of dispatch sees, not
+    # only the one the stats happen to report afterwards.
+    _, spec = build(block(["ys[i] = big(xs[i])"], header="for i in range(len(xs)):"))
+    n = 2000
+    monkeypatch.setattr(dispatch, "free_threaded", lambda: True)
+    dispatch._memo[spec.key] = (20_000.0, n, 0)
+    seen: list = []
+    monkeypatch.setattr(
+        dispatch,
+        "_profitable",
+        lambda spec_, t_ns, remaining, workers, n_chunks, backend: seen.append(backend) or True,
+    )
+    env = {"xs": list(range(n)), "ys": [0] * n, "big": lambda v: v * 2 + 1}
+    execute(spec, range(n), env)
+    assert env["ys"] == [v * 2 + 1 for v in range(n)]
+    assert seen == ["thread"]
+
+
+def test_a_chunk_set_sizes_a_pool_without_a_core_count(monkeypatch):
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: None)
+    src = block(
+        ["seen[i] = xs[i] * 2"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=4)",
+    )
+    _, spec = build(src)
+    n = 200
+    env = {"xs": list(range(n)), "seen": {}}
+    execute(spec, range(n), env, force_backend="thread")
+    assert env["seen"] == {i: i * 2 for i in range(n)}
+    assert dispatch._pool._max_workers == 4
+
+
+def test_direct_write_ready_refuses_anything_but_a_list_or_a_buffer():
+    # The direct path writes into the caller's container by index, which only a
+    # real list or a buffer supports without going through a user __setitem__.
+    import array
+
+    src = block(["ys[i] = xs[i]"], header="for i in range(len(xs)):", clauses="calibrate=false")
+    _, spec = build(src)
+    xs = [1, 2, 3, 4]
+    assert dispatch._direct_write_ready(spec, {"xs": xs, "ys": [0] * 4}, None) is True
+    assert dispatch._direct_write_ready(spec, {"xs": xs, "ys": array.array("i", [0] * 4)}, None)
+
+    class Subclass(list):
+        pass
+
+    assert dispatch._direct_write_ready(spec, {"xs": xs, "ys": Subclass([0] * 4)}, None) is False
+    assert dispatch._direct_write_ready(spec, {"xs": xs, "ys": {}}, None) is False
+    # a name the caller never bound cannot be written into either
+    assert dispatch._direct_write_ready(spec, {"xs": xs}, None) is False
+
+
+class _Accumulator:
+    def __init__(self):
+        self.total = 0
+
+
+@pytest.mark.parametrize("backend", ["thread", "sequential"])
+def test_a_reduction_into_an_attribute_is_not_rebound_through_env(backend):
+    # A dotted accumulator is written back with assign_path, so it must stay out
+    # of the values tuple the block returns; env has no key of that name.
+    src = block(
+        ["acc.total += xs[i]"], header="for i in range(len(xs)):", clauses="calibrate=false"
+    )
+    _, spec = build(src)
+    n = 400
+    acc = _Accumulator()
+    env = {"xs": list(range(n)), "acc": acc}
+    result = execute(spec, range(n), env, force_backend=backend)
+    assert acc.total == sum(range(n))
+    assert result == (n - 1,)
+
+
+def test_repeated_interrupts_accumulate_on_the_chunk_set_path(monkeypatch):
+    # The teardown counts its own interrupt, accumulating into the dict it is
+    # given. Only the collecting wait is interrupted: the drain inside the
+    # teardown uses the same call, and interrupting that too would unwind
+    # before the count was ever reached.
+    dispatch.shutdown()
+    monkeypatch.setattr(dispatch.os, "cpu_count", lambda: 2)
+    real_wait = dispatch.wait
+    armed = {"now": False}
+
+    def interrupting(fs, **kwargs):
+        if armed["now"]:
+            armed["now"] = False
+            real_wait(fs, timeout=0.15)
+            raise KeyboardInterrupt
+        return real_wait(fs, **kwargs)
+
+    src = block(
+        ["seen[i] = pace(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(pool_size=2, chunks=16), trust=callables",
+    )
+    _, spec = build(src)
+    n = 160
+    monkeypatch.setattr(dispatch, "wait", interrupting)
+    stats = dispatch._fresh_stats()
+    for _ in range(2):
+        armed["now"] = True
+        env = {
+            "xs": list(range(n)),
+            "seen": {},
+            "pace": lambda v: (time.sleep(0.01), v * 2)[1],
+        }
+        with pytest.raises(KeyboardInterrupt):
+            dispatch._execute(spec, range(n), env, None, "thread", stats)
+    assert stats["interrupted_runs"] == 2
+
+
+def test_repeated_interrupts_accumulate_on_the_direct_path(monkeypatch):
+    import concurrent.futures as cf
+
+    src = block(
+        ["ys[i] = slow(xs[i])"],
+        header="for i in range(len(xs)):",
+        clauses="calibrate=false, backend=thread(chunks=4), trust=callables",
+    )
+    _, spec = build(src)
+    assert spec.artifact.buffer_fast_path
+    n = 40
+    real_exception, calls = cf.Future.exception, []
+
+    def interrupting(self, timeout=None):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real_exception(self, timeout=timeout)
+
+    monkeypatch.setattr(cf.Future, "exception", interrupting)
+    stats = dispatch._fresh_stats()
+    for _ in range(2):
+        calls.clear()
+        env = {
+            "xs": list(range(n)),
+            "ys": [0] * n,
+            "slow": lambda v: (time.sleep(0.01), v * 2)[1],
+        }
+        with pytest.raises(KeyboardInterrupt):
+            dispatch._execute(spec, range(n), env, None, "thread", stats)
+    assert stats["interrupted_runs"] == 2
+
+
 def _record(idx: int, error=None) -> _Record:
     return _Record(idx, idx, idx + 1, {}, {}, errors=[], error=error)
 
