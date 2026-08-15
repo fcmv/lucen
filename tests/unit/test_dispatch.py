@@ -1357,7 +1357,10 @@ def test_a_failure_cancels_the_queued_tail_and_commits_the_prefix(monkeypatch):
     with pytest.raises(ZeroDivisionError):
         execute(spec, range(n), env, force_backend="thread")
 
-    assert len(ran) < n, "nothing was cancelled, so the queued tail never existed"
+    # the failing chunk stopping early is not cancellation; the tail chunks are
+    # the ones that must never have started
+    assert ran, "no chunk ran at all"
+    assert max(ran) < n - 10, "the last chunk ran, so the queued tail was never cancelled"
     # the failing chunk is the first, so the committed prefix is exactly the
     # iterations it completed before raising
     assert sorted(env["seen"]) == [0, 1, 2]
