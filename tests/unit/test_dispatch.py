@@ -1144,21 +1144,33 @@ def test_max_errors_reports_only_once_the_budget_is_passed():
 
 def test_chunk_errors_propagate_in_iteration_order():
     # A dict slab keeps the block off the buffer-direct path, so this is the
-    # chunk-set join deciding which failure the caller sees: the earliest one,
-    # with everything before it committed.
+    # chunk-set join deciding which failure the caller sees: the earliest one by
+    # index, with everything before it committed. The later chunk fails a
+    # different way, so the raised error identifies the record the join picked.
+    #
+    # The two failures are ordered by an event rather than by where they sit in
+    # their chunks: the later chunk fails on its second iteration and the
+    # earlier one on its thirty-eighth, so left to the scheduler the later
+    # failure can return the wait first and cancel the earlier chunk.
     src = block(
-        ["seen[i] = 100 // xs[i]"],
+        ["seen[i] = divide(xs[i])"],
         header="for i in range(len(xs)):",
-        clauses="calibrate=false, backend=thread(chunks=4)",
+        clauses="calibrate=false, backend=thread(chunks=4), trust=callables",
     )
     _, spec = build(src)
     n = 400
-    xs = [1] * n
-    xs[137] = 0
-    # a different failure later on, so the raised one identifies which record
-    # the join picked rather than only that some chunk failed
-    xs[301] = "not a number"
-    env = {"xs": xs, "seen": {}}
+    earlier_failed = threading.Event()
+
+    def divide(v):
+        if v == 137:
+            earlier_failed.set()
+            raise ZeroDivisionError("earlier chunk")
+        if v == 301:
+            assert earlier_failed.wait(5), "the earlier chunk never failed"
+            raise TypeError("later chunk")
+        return 100
+
+    env = {"xs": list(range(n)), "seen": {}, "divide": divide}
     with pytest.raises(ZeroDivisionError):
         execute(spec, range(n), env, force_backend="thread")
     committed = sorted(env["seen"])
