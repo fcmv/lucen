@@ -281,6 +281,24 @@ def test_every_named_impure_builtin_is_proved_impure(name):
     assert reason == f"'{name}' performs I/O or mutates state"
 
 
+def test_an_impure_builtin_is_caught_whatever_type_it_is(monkeypatch):
+    # CPython exposes these as BuiltinFunctionType and PyPy does not, so a type
+    # test stands in for identity only by accident: there, a block calling
+    # __import__ kept its parallel routing.
+    real = builtins.__import__
+
+    def stand_in(*args, **kwargs):
+        return real(*args, **kwargs)
+
+    stand_in.__name__ = "__import__"
+    monkeypatch.setattr(builtins, "__import__", stand_in)
+    purity.reset_memo()
+    assert purity.classify(stand_in) == (
+        purity.IMPURE,
+        "'__import__' performs I/O or mutates state",
+    )
+
+
 def test_stateful_modules_downgrade_their_callables():
     import logging
 

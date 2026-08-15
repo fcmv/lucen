@@ -38,12 +38,13 @@ def classify(
 ) -> Tuple[str, str]:
     if obj is None:
         return PURE, ""
+    # Match the object the name resolves to, whatever type the interpreter gives
+    # it: open reports __module__ == "io", and on PyPy several of these are not
+    # BuiltinFunctionType at all, so neither test can stand in for identity.
+    name = getattr(obj, "__name__", "")
+    if name in IMPURE_BUILTIN_NAMES and getattr(builtins, name, None) is obj:
+        return IMPURE, f"'{name}' performs I/O or mutates state"
     if isinstance(obj, types.BuiltinFunctionType):
-        # open reports __module__ == "io", so match the object the name resolves
-        # to rather than the module that defined it
-        name = getattr(obj, "__name__", "")
-        if name in IMPURE_BUILTIN_NAMES and getattr(builtins, name, None) is obj:
-            return IMPURE, f"'{name}' performs I/O or mutates state"
         return PURE, ""
     if getattr(obj, "__module__", None) in IMPURE_MODULES:
         return IMPURE, (

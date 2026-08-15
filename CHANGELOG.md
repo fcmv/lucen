@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   `open` entry in the impure-builtin set never matched and a block reading or
   writing a file kept its parallel routing. The match is now on the object the
   name resolves to. Every other name in the set behaves as before.
+- The same match no longer depends on the interpreter's object model. It was
+  reached only for a `types.BuiltinFunctionType`, which is what CPython gives
+  for these names but not what PyPy gives, so on PyPy a block calling
+  `__import__` kept its parallel routing too.
 
 ### Internal
 
