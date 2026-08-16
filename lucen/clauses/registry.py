@@ -20,6 +20,9 @@ DOWNGRADE_REASONS: FrozenSet[str] = frozenset(
         "unprofitable",
         "early_exit",
         "branch_merge",
+        # a write conflict is decided mid-run rather than during selection, but
+        # on_fallback governs it too, so it has to be nameable in an allow list
+        "conflict",
     }
 )
 

@@ -670,11 +670,11 @@ def test_calibration_memo_expires_by_use_count_and_regime_change():
     _, spec = build(src)
 
     dispatch._memo[spec.key] = (500.0, 1000, 0)
-    for _ in range(dispatch._MEMO_MAX_USES):
+    for _ in range(64):  # the budget itself, not whatever the constant says
         assert dispatch._memo_lookup(spec, 1000) == 500.0
     assert dispatch._memo_lookup(spec, 1000) is None
 
-    factor = dispatch._MEMO_REGIME_FACTOR
+    factor = 10
     dispatch._memo[spec.key] = (500.0, 1000, 0)
     assert dispatch._memo_lookup(spec, 1000 * factor) == 500.0
     assert dispatch._memo_lookup(spec, 1000 * factor + 1) is None
@@ -845,7 +845,8 @@ def test_recursion_headroom_exactly_at_the_floor_still_parallelizes(monkeypatch)
     # largest it refuses at.
     src = block(["ys[i] = xs[i] * 2"], header="for i in range(len(xs)):", clauses="calibrate=false")
     _, spec = build(src)
-    monkeypatch.setattr(dispatch, "_recursion_headroom", lambda: dispatch._MIN_RECURSION_HEADROOM)
+    # the floor itself, so the constant cannot move the assertion with it
+    monkeypatch.setattr(dispatch, "_recursion_headroom", lambda: 100)
     n = 400
     env = {"xs": list(range(n)), "ys": [0] * n}
     execute(spec, range(n), env, force_backend="thread")
@@ -1667,6 +1668,55 @@ def test_repeated_interrupts_accumulate_on_the_direct_path(monkeypatch):
         with pytest.raises(KeyboardInterrupt):
             dispatch._execute(spec, range(n), env, None, "thread", stats)
     assert stats["interrupted_runs"] == 2
+
+
+def test_a_key_written_slab_over_a_list_audits_against_its_length():
+    # The slab kind is decided statically and the container type only at run
+    # time, so a key-written slab can land on a real list. That is the one case
+    # where the audit knows an index bound, which is what selects the bitmap.
+    from lucen.execution import _accel
+
+    if not _accel.ACCELERATED:
+        pytest.skip("native core not loaded")
+    src = block(["out[key] = key * 2"], header="for key in keys:", clauses="calibrate=false")
+    _, spec = build(src)
+    assert [p.kind for p in spec.artifact.slabs] == ["dict"]
+
+    seen: list = []
+    real = _accel.audit_index_bitmap
+
+    def spy(key_lists, length):
+        seen.append(length)
+        return real(key_lists, length)
+
+    original = _accel.audit_index_bitmap
+    _accel.audit_index_bitmap = spy
+    try:
+        env = {"keys": [0, 1, 2, 3, 4, 5], "out": [0] * 8}
+        execute(spec, env["keys"], env, force_backend="thread")
+    finally:
+        _accel.audit_index_bitmap = original
+    assert env["out"] == [0, 2, 4, 6, 8, 10, 0, 0]
+    assert seen == [8], "the audit did not learn the container's length"
+
+
+def test_on_fallback_can_allow_a_write_conflict():
+    # on_fallback governs the conflict fallback, so conflict has to be nameable
+    # in its allow list; without that the reason it is asked about cannot matter.
+    src = block(
+        ["seen[key] = key * 2"],
+        header="for key in keys:",
+        clauses="calibrate=false, on_fallback=hard(allow=[conflict])",
+    )
+    _, spec = build(src)
+    assert dispatch._fallback_override(spec, "conflict") == "report"
+    keys = ["a", "b", "c", "d", "a", "e", "f", "g"]
+    env = {"keys": keys, "seen": {}}
+    execute(spec, keys, env, force_backend="thread")
+    golden_env = {"keys": keys, "seen": {}}
+    exec(src, golden_env)
+    assert env["seen"] == golden_env["seen"]
+    assert any(r.error == "ParallelWriteConflictError" for r in get_fallback_report())
 
 
 def _record(idx: int, error=None) -> _Record:
