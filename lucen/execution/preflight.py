@@ -103,7 +103,7 @@ def check(spec, env: Dict[str, Any], module_globals: Optional[Dict[str, Any]]) -
     if not trusts(spec, "callables"):
         trusted = spec.trusted_names | config.active().trust_callables
         for path in getattr(spec, "called_paths", ()):
-            if path in trusted or path.split(".", 1)[0] in trusted:
+            if path in trusted or path.partition(".")[0] in trusted:
                 continue
             fn = _resolve(path, env, module_globals)
             if fn is None:

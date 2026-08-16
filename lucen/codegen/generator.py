@@ -56,7 +56,7 @@ def _generate(analysis: BlockAnalysis, decision: BlockDecision) -> ChunkArtifact
             transactional = False
             continue
         if cls is Classification.SHARED_INDEXED_SAFE:
-            root = path.split(".", 1)[0]
+            root = path.partition(".")[0]
             if "." in path and analysis.domain and root in analysis.domain.values:
                 transactional = False
                 continue

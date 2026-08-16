@@ -116,8 +116,8 @@ class BlockSpec:
     skip_runtime_check: bool
     arg_names: Tuple[str, ...]
     grainsize: int
-    called_paths: Tuple[str, ...] = ()
-    trusted_names: FrozenSet[str] = frozenset()
+    called_paths: Tuple[str, ...]
+    trusted_names: FrozenSet[str]
     _fns: Optional[Tuple[Callable, Callable]] = field(default=None, repr=False)
 
     @property
@@ -140,8 +140,8 @@ def make_spec(analysis, decision: BlockDecision, artifact: ChunkArtifact) -> Blo
     )
     names = {p for p in artifact.params if p not in special}
     names |= {p for p in artifact.seq_params if p not in ("_plx_iter", "_plx_skip")}
-    names |= {p.container.split(".", 1)[0] for p in artifact.slabs}
-    names |= {r.scalar.split(".", 1)[0] for r in artifact.reductions}
+    names |= {p.container.partition(".")[0] for p in artifact.slabs}
+    names |= {r.scalar.partition(".")[0] for r in artifact.reductions}
     src = clauses.get("skip_runtime_check")
     grain = clauses.get("grainsize")
     if grain is not None:
@@ -383,9 +383,10 @@ def _join(spec, plan, records, first_error, env, module_globals, gate, stats):
         raise first_error[1]
 
     if not spec.skip_runtime_check:
-        for slab_plan in spec.artifact.slabs:
-            if slab_plan.kind != "dict":
-                continue
+        # selected up front rather than skipped inside the loop: skipping relies
+        # on no dict plan following a non-dict one, which is codegen's emission
+        # order and not something this audit should depend on
+        for slab_plan in [p for p in spec.artifact.slabs if p.kind == "dict"]:
             container = resolve_path(env, slab_plan.container)
             bound = len(container) if isinstance(container, list) else None
             overlap = audit_disjoint_dict_slabs(

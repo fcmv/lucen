@@ -432,7 +432,7 @@ def shadowed_builtins(tree: ast.AST) -> FrozenSet[str]:
                 note(name)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
-                note(alias.asname or alias.name.split(".", 1)[0])
+                note(alias.asname or alias.name.partition(".")[0])
     return frozenset(bound)
 
 
@@ -853,7 +853,7 @@ def _classify(
     for path, evs in grouped.items():
         if "." not in path:
             continue
-        root = path.split(".", 1)[0]
+        root = path.partition(".")[0]
         if all(e.kind in (_READ, _SUBREAD) for e in evs):
             continue
         if root in domain.names:
@@ -1005,7 +1005,7 @@ def _check_conditions(
     allowed = (Classification.LOOP_LOCAL, Classification.OUTER_READONLY)
     for lineno, names in conditions:
         for path in sorted(names):
-            root = path.split(".", 1)[0]
+            root = path.partition(".")[0]
             if root in domain.names:
                 continue
             info = targets.get(path) or targets.get(root)

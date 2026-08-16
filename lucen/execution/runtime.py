@@ -106,7 +106,7 @@ def fold_contributions(
 
 
 def resolve_path(env: Dict[str, Any], path: str) -> Any:
-    obj = env[path.split(".", 1)[0]]
+    obj = env[path.partition(".")[0]]
     for part in path.split(".")[1:]:
         obj = getattr(obj, part)
     return obj
