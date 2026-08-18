@@ -78,6 +78,16 @@ def block(body, clauses="calibrate=false"):
     return f"# LUCEN START {clauses}\nfor i in range(len(xs)):\n{lines}\n# LUCEN END\n"
 
 
+def test_the_two_verdicts_are_distinct_and_never_none():
+    # Nothing renders a verdict, so its value carries no information and only
+    # its distinctness does: a verdict that collided with the other, or with
+    # None, would read as pure and quietly restore a block's parallel routing.
+    assert purity.PURE is not purity.IMPURE
+    assert purity.PURE is not None
+    assert purity.IMPURE is not None
+    assert {purity.PURE, purity.IMPURE} == set(purity.Verdict)
+
+
 def test_classifier_proves_module_state_mutation():
     verdict, reason = purity.classify(stateful_tick)
     assert verdict == purity.IMPURE

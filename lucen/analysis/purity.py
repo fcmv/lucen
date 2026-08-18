@@ -5,6 +5,7 @@ import builtins
 import inspect
 import textwrap
 import types
+from enum import Enum, auto
 from typing import Any, Dict, Optional, Set, Tuple
 
 from lucen.analysis.rewriter import _MUTATING_METHODS
@@ -25,17 +26,29 @@ IMPURE_BUILTIN_NAMES = frozenset(
 IMPURE_MODULES = frozenset({"random", "logging"})
 
 _MAX_DEPTH = 3
-_verdicts: Dict[int, Tuple[str, str]] = {}
 
-PURE = "pure"
-IMPURE = "impure"
+
+class Verdict(Enum):
+    """The two answers the classifier can give.
+
+    Only ever compared, never rendered: preflight asks whether the verdict is
+    IMPURE and reports the reason string instead. Distinct members rather than
+    equal-looking strings so a verdict cannot be spelled, or collide with None.
+    """
+
+    PURE = auto()
+    IMPURE = auto()
+
+
+PURE, IMPURE = Verdict.PURE, Verdict.IMPURE
+_verdicts: Dict[int, Tuple[Verdict, str]] = {}
 
 
 # only positive proof of impurity ever downgrades a block; anything
 # unprovable keeps the args-as-reads trust, so routing never regresses
 def classify(
     obj: Any, _depth: int = _MAX_DEPTH, _seen: Optional[Set[int]] = None
-) -> Tuple[str, str]:
+) -> Tuple[Verdict, str]:
     if obj is None:
         return PURE, ""
     # Match the object the name resolves to, whatever type the interpreter gives
@@ -67,7 +80,7 @@ def classify(
     return verdict
 
 
-def _analyze(fn, code, depth: int, seen: Set[int]) -> Tuple[str, str]:
+def _analyze(fn, code, depth: int, seen: Set[int]) -> Tuple[Verdict, str]:
     try:
         source = textwrap.dedent(inspect.getsource(fn))
         tree = ast.parse(source)
