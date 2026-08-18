@@ -8,9 +8,9 @@ from lucen.execution import _accel
 
 
 class _Skip:
-    _instance: "Optional[_Skip]" = None
+    _instance: Optional[_Skip] = None
 
-    def __new__(cls) -> "_Skip":
+    def __new__(cls) -> _Skip:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

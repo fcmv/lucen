@@ -648,7 +648,7 @@ def _run_buffer_direct(
     # start is either 0 or a chunk boundary the probe consumed whole, so dropping
     # the chunks it already wrote leaves the rest aligned; no chunk straddles it
     work = [(a, b) for a, b in bounds if b > start]
-    futures = _submit_all(pool, lambda _idx, a, b: job(a, b), list(enumerate(work, start=1)), spec)
+    futures = _submit_all(pool, lambda _idx, a, b: job(a, b), list(enumerate(work)), spec)
     try:
         for fut in futures:
             exc = fut.exception()
