@@ -1,11 +1,8 @@
 # Contributing to Lucen
 
-Thank you for considering a contribution. Lucen is a correctness-first
-parallelizing compiler for Python, and its contribution bar is set by that:
-the guarantee that a parallel run is bit-identical to plain sequential Python
-is not negotiable, and the suite that proves it is the gate every change
-passes through. This document explains how to get set up, what the bar is, and
-how to get a change merged.
+Contributions are welcome. The bar is set by one property: a parallel run is
+bit-identical to plain sequential Python, and the suite that proves it is the
+gate every change passes through.
 
 Before contributing code, please also read:
 

@@ -1,30 +1,25 @@
 # Getting Support
 
-This page is a map of where to go for each kind of question or report, so you
-reach the right channel the first time.
+Where to go for each kind of question or report.
 
-## Start with the documentation
+## Start with the tools and the docs
 
-Most questions are answered by the docs, and they are written to be read:
+If you are wondering why a block did or did not parallelize, ask the tool
+first. `lucen explain yourfile.py` reports statically what Lucen decided for
+every marked block and why; `lucen profile yourscript.py` reports what actually
+ran.
 
-- **[README.md](README.md)** has a complete tutorial from `pip install lucen`
-  through marking a loop, activating, reading `explain` output, and
-  understanding a refusal. If you are new, start there.
-- **[LIMITATIONS.md](LIMITATIONS.md)** is the honest inventory of what Lucen
-  does not do and where its guarantee's boundary lies. If Lucen is refusing
-  to parallelize a block, or behaving differently than you expect, the answer is
-  very often here.
-- **[BENCHMARK.md](BENCHMARK.md)** has the measured performance across
-  interpreters, so you can calibrate expectations against real numbers.
+- **[README.md](README.md)** covers install, `lucen run`, activation, reading
+  the reports, and the clause surface. Start there.
+- **[LIMITATIONS.md](LIMITATIONS.md)** is the inventory of what Lucen does not
+  do and where its guarantee's boundary lies. If a block is refused or behaves
+  unexpectedly, the answer is very often here.
+- **[BENCHMARK.md](BENCHMARK.md)** has measured performance across
+  interpreters, to calibrate expectations against real numbers.
 - The **[technical specification](docs/spec/lucen_technical_spec.md)** is the
   authority on every semantic, and the
   **[engineering guide](docs/implementation/lucen_engineering_doc.md)** maps
   the codebase.
-
-The tools themselves are also built to answer questions. `lucen explain
-yourfile.py` reports, statically, what Lucen decided for every marked block
-and why. `lucen profile yourscript.py` reports what actually ran. If you are
-wondering why a block did or did not parallelize, ask the tool first.
 
 ## Where to take each kind of thing
 
@@ -38,8 +33,8 @@ wondering why a block did or did not parallelize, ask the tool first.
 
 ## Writing a good bug report
 
-Lucen is a correctness-first parallelizing compiler, so the single most
-useful bug report is one that makes a divergence concrete. When you can, include:
+The most useful report is one that makes a divergence concrete. When you can,
+include:
 
 - A **minimal marked source file** that triggers the behavior.
 - The **interpreter and platform** (for example, CPython 3.12 on Windows, GIL
@@ -51,9 +46,6 @@ useful bug report is one that makes a divergence concrete. When you can, include
 - Whether the **native core or the pure-Python fallback** was in use.
   `LUCEN_DISABLE_NATIVE=1` forces the fallback; a divergence on only one path
   tells the maintainers exactly where to look.
-
-A reproduction that a maintainer can run and see fail is worth more than any
-amount of description.
 
 ## What this project does not provide
 
