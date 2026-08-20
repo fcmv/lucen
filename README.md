@@ -5,10 +5,11 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![CI](https://github.com/fcmv/lucen/actions/workflows/ci.yml/badge.svg)](https://github.com/fcmv/lucen/actions/workflows/ci.yml)
 
-Lucen parallelizes ordinary Python loops that you mark with two comments. It
-rewrites a marked loop into chunked parallel execution only when it can prove
-the result will be identical to running the loop sequentially; anything it
-cannot prove runs as the Python you wrote.
+Lucen is a source-to-source compiler that parallelizes ordinary Python loops
+marked with a pair of comment pragmas. It rewrites a marked loop into chunked
+parallel execution only when it can prove the result will be identical to
+running the loop sequentially; anything it cannot prove runs as the Python you
+wrote.
 
 ![Running a marked loop under lucen run: same output, 2.5x faster](assets/lucen.gif)
 
@@ -25,27 +26,27 @@ lucen run work.py
 
 Over 100,000 records that loop goes from 5.7 s to 2.3 s on twelve cores, with
 a bit-identical checksum ([examples/scored_records.py](examples/scored_records.py),
-median of 3). No pools, no worker functions, no pickling code. The pragmas are
-comments: delete the two lines, or uninstall Lucen, and you have the program
-you started with.
+median of 3). Because the pragmas are ordinary comments, deleting the two lines
+or uninstalling Lucen leaves the program you started with; the
+[glossary](docs/glossary.md) calls this the Comment Invariant.
 
-## What Lucen promises
+## Guarantees
 
-1. **Never an incorrect result.** Chunks write private slabs, audited for
-   disjointness at join and committed in chunk order. Dict insertion order,
-   float reduction bits and mid-error container state match sequential
-   execution bit for bit. A write conflict discards the parallel attempt and
+1. **Results are bit-identical to sequential execution.** Chunks write private
+   slabs, audited for disjointness at join and committed in chunk order. Dict
+   insertion order, float reduction bits and mid-error container state all
+   match, bit for bit. A write conflict discards the parallel attempt and
    re-runs the loop sequentially.
-2. **Never disruptive.** What Lucen cannot prove runs sequentially, and the
-   reason lands in `lucen.get_fallback_report()`. Exceptions keep their type,
-   their message and the exact sequential-prefix state of your containers.
-3. **Never silently pointless.** A static pre-screen plus a runtime probe
-   refuses to parallelize loops that would lose to dispatch overhead, and
-   reports that too.
+2. **Whatever cannot be proven runs sequentially.** The reason is recorded in
+   `lucen.get_fallback_report()`, and exceptions keep their type, their message
+   and the exact sequential-prefix state of your containers.
+3. **Loops that would lose to dispatch overhead are not parallelized.** A
+   static pre-screen and a runtime probe decide, and report that decision too.
 
-The correctness claim is checked by a matrix of 7 interpreters x 8 workloads x
-4 execution pathways, every cell bit-identical to plain Python
-([BENCHMARK.md](BENCHMARK.md)).
+These hold across a matrix of 7 interpreters x 8 workloads x 4 execution
+pathways, every cell checked bit-identical against plain Python
+([BENCHMARK.md](BENCHMARK.md)). What they in turn assume about your own code is
+set out in [LIMITATIONS.md](LIMITATIONS.md) section 1.
 
 ## Installation
 
@@ -53,11 +54,12 @@ The correctness claim is checked by a matrix of 7 interpreters x 8 workloads x
 pip install lucen
 ```
 
-Python 3.9 or later. On GIL builds pip installs a native Rust core (abi3, one
-binary per platform) that runs the write-set audit and the reduction folds. On
-free-threaded builds, where the abi3 core cannot load, pip installs the
-pure-Python wheel instead; that path is fully supported and passes the same
-test suite.
+Python 3.9 or later, with no third-party runtime dependencies on 3.11 and
+later; 3.9 and 3.10 need `tomli` to read `lucen.toml`. On GIL builds pip
+installs a native Rust core (abi3, one binary per platform) that runs the
+write-set audit and the reduction folds. On free-threaded builds, where the
+abi3 core cannot load, pip installs the pure-Python wheel instead; that path is
+fully supported and passes the same test suite.
 
 From source, with the optional Rust toolchain:
 
@@ -102,11 +104,12 @@ work.main()
 On Windows and macOS the process backend re-imports the entry module in every
 worker, so it needs the usual `if __name__ == "__main__":` guard. Lucen detects
 a missing guard in the parent and runs the block sequentially with an
-actionable message, rather than letting `multiprocessing` fail in the children.
+message naming the fix, rather than letting `multiprocessing` fail in the
+children. `activate()` is idempotent.
 
-## Seeing what it decided
+## Reports
 
-`lucen explain` is static, and reports facts as facts:
+`lucen explain` reports each block's classification without running the file:
 
 ```
 $ lucen explain examples/demo_workload.py
@@ -144,8 +147,7 @@ for record in lucen.get_fallback_report():
 ```
 
 In CI, `lucen explain --strict --baseline baseline.json` fails the build when a
-block's classification regresses against a committed baseline, so a refactor
-that quietly de-parallelizes a hot loop is caught in review.
+block's classification regresses against a committed baseline.
 
 ## Tuning
 
@@ -207,22 +209,19 @@ scanner -> rewriter -> selector -> codegen -> dispatch
 
 The rewriter classifies every name in the block (loop-local, read-only,
 reduction accumulator, indexed write, cross-iteration read) and recognizes
-dependency shapes analytically, including `results[i // 2]`-style DAGs. The
-selector routes each block, with reasons. Codegen emits a chunk function for
-workers and a sequential twin that is also the fallback path, so the sequential
-behavior *is* your original loop. Dispatch runs chunks over persistent pools,
-audits write disjointness at join, folds reductions in exact element order, and
-commits in chunk order.
+dependency shapes analytically, including `results[i // 2]`-style DAGs. Codegen
+emits a chunk function for workers and a sequential twin that is also the
+fallback path, so the sequential behavior is the original loop by construction.
+Dispatch runs chunks over persistent pools, audits write disjointness at join,
+folds reductions in exact element order, and commits in chunk order.
 
-Backend selection is static and interpreter-independent. Maps and reductions go
-to PROCESS on both GIL and free-threaded builds, because shared-object
-reference counting makes threads lose on shared-container workloads even
-without a GIL. THREAD serves by-reference blocks and free-threaded heavy
-compute; everything lighter stays sequential. The loop bodies themselves are
-always your Python: compiling eligible bodies to native kernels is the flagship
-roadmap item, not a current feature. See
-[docs/architecture.md](docs/architecture.md) and the
-[technical specification](docs/spec/lucen_technical_spec.md).
+The loop bodies themselves are always your Python; compiling eligible bodies to
+native kernels is [ROADMAP](ROADMAP.md) L1, not a current feature. The two
+concurrency protocols behind the audit and the wavefront are model-checked.
+[docs/architecture.md](docs/architecture.md) has the stage-by-stage diagrams
+and the backend-selection rules; the
+[technical specification](docs/spec/lucen_technical_spec.md) is the authority
+on every semantic.
 
 ## Performance
 
@@ -246,12 +245,15 @@ are, comments; "Lucen" is the shipped product with its gate deciding.
 Where parallelism pays, Lucen runs 3x to 4.3x faster than its own sequential
 execution and lands within a few percent of hand-tuned `concurrent.futures`
 code. Where it cannot pay, the gate stays sequential at effectively zero
-overhead. The hand-written comparison code was AI-generated to an expert
-standard, and its parallel float reductions produce different bits than
-sequential Python on every interpreter tested, which is the asterisk on those
-last two columns; Lucen's reductions are bit-identical everywhere.
+overhead.
 
-Every number, pathway, interpreter and the raw JSON: [BENCHMARK.md](BENCHMARK.md).
+One caveat on the last column: the hand-written comparison code was
+AI-generated to an expert standard, and its parallel float reductions produce
+different bits than sequential Python on every interpreter tested. Lucen's
+reductions are bit-identical everywhere.
+
+Every number, pathway and interpreter, the correctness matrix, and the raw
+JSON: [BENCHMARK.md](BENCHMARK.md).
 
 ## Limitations
 
@@ -285,9 +287,11 @@ and what two red-team campaigns (130+ adversarial scenarios) found there, is in
 | [Engineering guide](docs/implementation/lucen_engineering_doc.md) | How the code is organized |
 | [Formal specifications](docs/formal/) | TLA+ and executable checks of the concurrency invariants |
 | [Paper](docs/paper/lucen.md) | The design and evaluation, in preprint form |
+| [BENCHMARK.md](BENCHMARK.md) | Cross-version measurements and the correctness matrix |
 | [LIMITATIONS.md](LIMITATIONS.md) | Known gaps and the trust contract |
 | [ROADMAP.md](ROADMAP.md) | What is planned, in what order |
 | [STABILITY.md](STABILITY.md) | What is stable and what may change |
+| [SUPPORT.md](SUPPORT.md) | Where to take a question, a bug, or a security report |
 | [examples/](examples/) | Runnable examples, including the spec's worked DAG |
 
 ## Contributing

@@ -21,9 +21,15 @@ numbers are in [BENCHMARK.md](BENCHMARK.md), and the full semantics are in the
 
 Lucen guarantees a marked file behaves identically to the same file with the
 pragmas treated as comments, provided your objects and helpers tell the truth
-about themselves. Two red-team campaigns (over 130 scenarios) found that every
+about themselves. Two adversarial red-team campaigns, over 130 scenarios across
+a black-box third-party posture and a competitor posture, found that every
 silent divergence reduces to one of the three items below, each of them code the
-analyzer cannot see inside. This is the trust contract.
+analyzer cannot see inside. This is the trust contract: enforced where
+enforcement is possible, documented where it is not.
+
+Everything outside it is either executed bit-identically or refused loudly,
+including aliasing, cross-iteration dependencies, ordering-sensitive reductions,
+exception types and prefixes, hostile containers, and malformed pragmas.
 
 ### 1.1 Helper purity beyond readable source
 
@@ -38,13 +44,15 @@ naming it. That closes the case for any helper whose source is importable and
 analyzable. What remains is helpers the analyzer cannot read: C extension
 functions, and callables reached through dynamic dispatch it cannot resolve to a
 definition. Those keep the documented args-as-reads trust, and a stateful one
-hiding behind that boundary diverges silently. This is the sharpest edge of the
-contract.
+hiding behind that boundary diverges silently.
 
 Keep helpers called from a marked block pure with respect to hidden state. If
 one is safe but unreadable (a C-level function you know is pure), assert it with
 `# LUCEN TRUST` on its `def`, `trust=callables` on the block, or a
 `[trust] callables` entry in `lucen.toml`.
+
+**Severity: medium**, the highest here. Bounded to unreadable stateful helpers;
+the readable case is proven and downgraded automatically.
 
 ### 1.2 Faithful serialization
 
@@ -52,7 +60,9 @@ The process backend ships argument bundles by pickle, so an object whose
 serialization does not preserve value would arrive at the worker changed. The
 preflight gate (spec 5.13) verifies that the first chunk's bundle reaches a byte
 fixed point after one round trip; an accumulating serializer never converges and
-the block falls back sequentially and loudly.
+the block falls back sequentially and loudly. This is what catches the
+demonstrated silent-corruption exploit, an object that adds a constant on every
+round trip.
 
 A serializer that oscillates with a period greater than one can pass the
 convergence check while still not being value-preserving in transit. That is a
@@ -60,6 +70,8 @@ pathological serializer, and the check catches the common accumulating form
 rather than every conceivable period. Objects passed into a marked block must
 pickle faithfully, which `multiprocessing` already expects; `trust=pickle`
 waives the check when you have verified the object yourself.
+
+**Severity: low.** Requires a deliberately or unusually broken serializer.
 
 ### 1.3 Two explicit assertions
 
@@ -73,7 +85,10 @@ the analyzer cannot, and red-team testing confirmed the property that matters:
 one assertion is never enough. `depend=none` alone on a real dependency is still
 caught by the tier-C audit and re-runs sequentially. Do not add
 `skip_runtime_check=true` unless you have independently proven the writes are
-disjoint.
+disjoint; if you are unsure, drop it and let the audit protect you at a small
+runtime cost.
+
+**Severity: low by design.** Reachable only by two deliberate expert waivers.
 
 ---
 
@@ -93,7 +108,11 @@ interleaved by chunk rather than in loop order.
 Where a side effect is statically detectable the purity proof routes the block
 sequentially precisely to preserve order, so this surfaces mainly under an
 explicit trust assertion that overrides that proof. If a block's side effects
-must be ordered, do not force it parallel.
+must be ordered, do not force it parallel; consumers of unordered side effects,
+such as counters and independent writes, are unaffected.
+
+**Severity: low.** Count fidelity is exact; order fidelity is not promised for
+side-effecting parallel blocks.
 
 ### 2.2 Executor-observing code sees workers
 
@@ -102,6 +121,9 @@ thread-local state) sees the worker that ran the iteration rather than the
 single process or thread it would see sequentially. This is intrinsic to running
 on more than one worker: if a body's result depends on where it runs, it is not
 a parallelizable body.
+
+**Severity: low.** Observing the executor is outside the value contract; the
+computed result is unaffected.
 
 ### 2.3 Spawn platforms need the `__main__` guard
 
@@ -113,6 +135,8 @@ spawns, and runs the block sequentially with an actionable message instead of
 the child-side error flood `multiprocessing` would produce. The result stays
 correct; the cost is that the block does not parallelize. Put top-level work
 behind `if __name__ == "__main__":`, as `multiprocessing` already requires.
+
+**Severity: low.** Detected and handled; the fix is a one-line guard.
 
 ### 2.4 Destructors run in the worker that owns the object
 
@@ -127,6 +151,9 @@ releases the object, so a body that allocates such an object reads as pure. Do
 not rely on `__del__` for program-visible effects in a marked loop; release
 timing is an implementation detail in plain Python too. Use an explicit
 `close()`, a `with` block, or return the value and act on it after the loop.
+
+**Severity: moderate, and narrow.** What differs is the context a destructor
+runs in and its parent-visible effect, which the value contract does not cover.
 
 ### 2.5 Exception type can degrade across the process boundary
 
@@ -148,6 +175,9 @@ Keep exceptions that can escape a marked block picklable. Where the type matters
 and cannot be made picklable, pin the block with `backend=thread`, which raises
 the original exception object with its traceback intact.
 
+**Severity: low, and confined to the error path.** The message survives in every
+case, the committed values are untouched, and the degradation is loud.
+
 ### 2.6 Process workers multiply the memory footprint
 
 A process worker is a separate interpreter holding its own copy of whatever the
@@ -165,6 +195,10 @@ graph rather than your core count: `backend=process(pool_size=N)` on the block,
 `[defaults] pool_size` for the project, or `[limits] max_processes_per_block` as
 a ceiling. A body that is not helped by separate address spaces can take
 `backend=thread` instead, as can any block on a free-threaded build.
+
+**Severity: low to moderate**, in proportion to how heavy your imports are. No
+effect on results; when it bites, it is memory pressure at the first dispatch on
+a many-core machine.
 
 ---
 
@@ -222,13 +256,13 @@ runs the same interpreted bytecode it would run sequentially, on whichever
 worker executes it, so for a body that is interpreter work over Python objects
 the speedup is bounded by the core count and the interpreter rather than by
 native code generation. Native compilation of a provably-typed numeric subset is
-[ROADMAP](ROADMAP.md) L1, the flagship item, and is compiler-scale work.
+[ROADMAP](ROADMAP.md) L1, the largest item there and compiler-scale work.
 
 ---
 
 ## 4. Scope limits
 
-Boundaries of the design, not defects.
+What Lucen does not attempt. These are boundaries of the design, not defects.
 
 ### 4.1 One block per pragma pair, one construct per block
 

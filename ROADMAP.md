@@ -2,7 +2,8 @@
 
 Planned work, paired with [LIMITATIONS.md](LIMITATIONS.md); most items close a
 specific limitation and link back to it. Horizons are relative priority, not
-dated commitments.
+dated commitments. Every item below is accepted and not yet started; anything
+considered and declined is under [Not planned](#not-planned).
 
 None of these changes the guarantee that a parallel run is bit-identical to the
 same file run as plain sequential Python. An item found to require relaxing it

@@ -115,7 +115,8 @@ Project-wide defaults and hard ceilings live in `lucen.toml` at the project
 root: pool sizes, chunk counts, timeout ceilings, the error mode, an
 experimental-features veto, and a `[trust] callables` list. Its precedence
 runs from the built-in default, through `[defaults]`, through a per-block
-pragma clause, clamped by `[limits]`. See the
+pragma clause, clamped by `[limits]`. Degenerate values are rejected when the
+file loads, with the same strictness a pragma clause gets. See the
 [technical specification](spec/lucen_technical_spec.md) for the full schema.
 
 ## Removed clauses
