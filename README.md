@@ -4,12 +4,19 @@
 [![Python](https://img.shields.io/badge/python-3.9%20to%203.14t-blue.svg)](#supported-interpreters)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![CI](https://github.com/fcmv/lucen/actions/workflows/ci.yml/badge.svg)](https://github.com/fcmv/lucen/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/fcmv/lucen/badge)](https://securityscorecards.dev/viewer/?uri=github.com/fcmv/lucen)
+
+**Never an incorrect result. Never disruptive. Never silently pointless.**
 
 Lucen is a source-to-source compiler that parallelizes ordinary Python loops
 marked with a pair of comment pragmas. It rewrites a marked loop into chunked
 parallel execution only when it can prove the result will be identical to
 running the loop sequentially; anything it cannot prove runs as the Python you
 wrote.
+
+[Documentation](https://fcmv.github.io/lucen/) |
+[Changelog](CHANGELOG.md) |
+[Questions and bug reports](SUPPORT.md)
 
 ![Running a marked loop under lucen run: same output, 2.5x faster](assets/lucen.gif)
 
@@ -32,16 +39,17 @@ or uninstalling Lucen leaves the program you started with; the
 
 ## Guarantees
 
-1. **Results are bit-identical to sequential execution.** Chunks write private
-   slabs, audited for disjointness at join and committed in chunk order. Dict
-   insertion order, float reduction bits and mid-error container state all
-   match, bit for bit. A write conflict discards the parallel attempt and
+1. **Never an incorrect result.** Chunks write private slabs, audited for
+   disjointness at join and committed in chunk order. Dict insertion order,
+   float reduction bits and mid-error container state all match sequential
+   execution, bit for bit. A write conflict discards the parallel attempt and
    re-runs the loop sequentially.
-2. **Whatever cannot be proven runs sequentially.** The reason is recorded in
-   `lucen.get_fallback_report()`, and exceptions keep their type, their message
-   and the exact sequential-prefix state of your containers.
-3. **Loops that would lose to dispatch overhead are not parallelized.** A
-   static pre-screen and a runtime probe decide, and report that decision too.
+2. **Never disruptive.** Whatever cannot be proven runs sequentially, with the
+   reason recorded in `lucen.get_fallback_report()`. Exceptions keep their type,
+   their message and the exact sequential-prefix state of your containers.
+3. **Never silently pointless.** A static pre-screen and a runtime probe refuse
+   to parallelize loops that would lose to dispatch overhead, and report that
+   decision too.
 
 These hold across a matrix of 7 interpreters x 8 workloads x 4 execution
 pathways, every cell checked bit-identical against plain Python
@@ -288,11 +296,20 @@ and what two red-team campaigns (130+ adversarial scenarios) found there, is in
 | [Formal specifications](docs/formal/) | TLA+ and executable checks of the concurrency invariants |
 | [Paper](docs/paper/lucen.md) | The design and evaluation, in preprint form |
 | [BENCHMARK.md](BENCHMARK.md) | Cross-version measurements and the correctness matrix |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [LIMITATIONS.md](LIMITATIONS.md) | Known gaps and the trust contract |
 | [ROADMAP.md](ROADMAP.md) | What is planned, in what order |
 | [STABILITY.md](STABILITY.md) | What is stable and what may change |
 | [SUPPORT.md](SUPPORT.md) | Where to take a question, a bug, or a security report |
 | [examples/](examples/) | Runnable examples, including the spec's worked DAG |
+
+## Getting help
+
+Ask usage questions in GitHub Discussions, and file reproducible bugs as GitHub
+issues. Before either, `lucen explain` and `lucen profile` answer most "why did
+this block not parallelize" questions on their own. [SUPPORT.md](SUPPORT.md)
+maps each kind of report to its channel and says what a useful bug report
+contains. Security issues go to [SECURITY.md](SECURITY.md), not public issues.
 
 ## Contributing
 
@@ -301,8 +318,7 @@ pipeline are judged by the invariant suite, and no routing change lands without
 benchmark evidence. See [CONTRIBUTING.md](CONTRIBUTING.md) for the process,
 [AI_USAGE_GUIDELINE_FOR_PR.md](AI_USAGE_GUIDELINE_FOR_PR.md) for AI-assisted
 contributions, [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made, and
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. Security
-issues go through [SECURITY.md](SECURITY.md), not public issues.
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), which governs all project spaces.
 
 ## License
 
