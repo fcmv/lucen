@@ -26,6 +26,9 @@ theme:
 
 plugins:
   - search
+  # The guides below live at the repository root so GitHub and the sdist show
+  # them; this pulls them into the site rather than linking back out.
+  - include-markdown
   - mkdocstrings:
       handlers:
         python:
@@ -34,6 +37,9 @@ plugins:
             show_source: false
             members_order: source
             show_root_heading: true
+
+hooks:
+  - tools/mkdocs_root_links.py
 
 markdown_extensions:
   - admonition
@@ -45,6 +51,12 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Guides:
+      - Limitations: limitations.md
+      - Benchmarks: benchmark.md
+      - Stability policy: stability.md
+      - Roadmap: roadmap.md
+      - Changelog: changelog.md
   - Reference:
       - Architecture: architecture.md
       - Pragmas and clauses: pragmas.md
@@ -55,3 +67,6 @@ nav:
       - Engineering guide: implementation/lucen_engineering_doc.md
       - Formal specifications: formal/README.md
       - Architecture decisions: adr/README.md
+  - Project:
+      - Getting support: support.md
+      - Contributing: contributing.md
