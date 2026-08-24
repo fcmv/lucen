@@ -97,7 +97,7 @@ wheel cannot be selected there) and any architecture without a native build.
 `pip install lucen` picks the native wheel on GIL builds and the pure wheel
 otherwise, so the install always succeeds and always runs correctly; the
 presence or absence of the native core never changes results. Neither wheel has
-a third-party runtime dependency on 3.11 and later; below that, both require
+a third-party runtime dependency on 3.11 and later; below that, both declare
 `tomli`, which stands in for the stdlib `tomllib` when reading `lucen.toml`. Free-threaded
 native acceleration is planned (ROADMAP M2); until then a free-threaded install
 uses the pure wheel and the pure-Python fallback.

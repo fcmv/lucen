@@ -64,7 +64,8 @@ pip install lucen
 ```
 
 Requires Python 3.9 or later. There are no third-party runtime dependencies on
-3.11 and later; 3.9 and 3.10 need `tomli` to read `lucen.toml`. On GIL builds
+3.11 and later; on 3.9 and 3.10 pip pulls in `tomli`, which stands in for the
+stdlib `tomllib` when reading `lucen.toml`. On GIL builds
 pip installs a native Rust core (abi3, one binary per platform) that runs the
 write-set audit and the reduction folds. On free-threaded builds, where the
 abi3 core cannot load, pip installs the pure-Python wheel instead, which passes
