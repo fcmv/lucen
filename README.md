@@ -33,9 +33,9 @@ lucen run work.py
 
 Over 100,000 records that loop goes from 5.7 s to 2.3 s on twelve cores, with
 a bit-identical checksum ([examples/scored_records.py](examples/scored_records.py),
-median of 3). Because the pragmas are ordinary comments, deleting the two lines
-or uninstalling Lucen leaves the program you started with; the
-[glossary](docs/glossary.md) calls this the Comment Invariant.
+median of 3). The pragmas are ordinary comments, so with Lucen uninstalled the
+file is the program you started with: the
+[Comment Invariant](docs/glossary.md).
 
 ## Guarantees
 
@@ -53,8 +53,8 @@ or uninstalling Lucen leaves the program you started with; the
 
 These hold across a matrix of 7 interpreters x 8 workloads x 4 execution
 pathways, every cell checked bit-identical against plain Python
-([BENCHMARK.md](BENCHMARK.md)). What they in turn assume about your own code is
-set out in [LIMITATIONS.md](LIMITATIONS.md) section 1.
+([BENCHMARK.md](BENCHMARK.md)). What they assume about your own code is
+[LIMITATIONS.md](LIMITATIONS.md) section 1.
 
 ## Installation
 
@@ -66,8 +66,8 @@ Python 3.9 or later, with no third-party runtime dependencies on 3.11 and
 later; 3.9 and 3.10 need `tomli` to read `lucen.toml`. On GIL builds pip
 installs a native Rust core (abi3, one binary per platform) that runs the
 write-set audit and the reduction folds. On free-threaded builds, where the
-abi3 core cannot load, pip installs the pure-Python wheel instead; that path is
-fully supported and passes the same test suite.
+abi3 core cannot load, pip installs the pure-Python wheel instead, which passes
+the same test suite.
 
 From source, with the optional Rust toolchain:
 
@@ -111,9 +111,8 @@ work.main()
 
 On Windows and macOS the process backend re-imports the entry module in every
 worker, so it needs the usual `if __name__ == "__main__":` guard. Lucen detects
-a missing guard in the parent and runs the block sequentially with an
-message naming the fix, rather than letting `multiprocessing` fail in the
-children. `activate()` is idempotent.
+a missing guard before any worker spawns and runs the block sequentially with a
+message naming the fix. `activate()` is idempotent.
 
 ## Reports
 
@@ -140,9 +139,9 @@ Block 1 (line 12)
   Reason: cross-iteration dependency 'scores[i - 1]' (monotonic chain)
 ```
 
-`lucen profile script.py --per-block` reports what actually ran, per block,
-with timings. A runtime downgrade prints one line on stderr and is retained as
-a structured record:
+`lucen profile script.py --per-block` reports what actually ran, with timings.
+A runtime downgrade prints one line on stderr and is retained as a structured
+record:
 
 ```
 lucen fallback: PARALLEL_UNPROFITABLE (work.py:4): measured ~44 ns/iteration
@@ -171,42 +170,17 @@ malformed clause is a loud import-time error with a did-you-mean suggestion.
 |---|---|
 | `backend=` | Pin the backend: `thread`, `process`, `sequential`, with `pool_size`/`chunks` |
 | `calibrate=` | Control the profitability gate (`false` forces parallel) |
-| `grainsize=` | Level width for a recognized-DAG wavefront |
-| `affinity=` | CPU affinity: `compact`, `scatter`, or `explicit(cores=[...])` |
-| `nested=` | Policy for a block reached inside another parallel block |
-| `depend=` | Assert independence (`none`) or an acyclic order |
-| `skip_runtime_check=` | Disable the runtime write-set audit (with `depend=none`) |
-| `trust=` | Waive the purity or pickle check: `callables`, `pickle`, `all` |
 | `reduce=` | Name the reduction op (`sum`, `min`, ...) or `custom(fn=, identity=)` |
-| `reduction_order=` | `sequential_equivalent` (default, bit-identical), `stable`, or `custom` |
 | `timeout=` | Bound wall time; raises `ParallelTimeoutError` |
 | `on_error=` | Gather per-iteration exceptions instead of failing fast (`collect`) |
 | `strict=` | Turn this block's fallbacks into hard errors |
-| `on_fallback=` | Set how a fallback is surfaced for this block |
-| `progress=` | Per-chunk or per-iteration progress reporting |
 
-Every accepted form is in [docs/pragmas.md](docs/pragmas.md). Project-wide
-defaults and hard ceilings (pool sizes, timeout ceilings, an
-experimental-features veto) live in `lucen.toml` at your project root.
-
-Where the purity proof cannot read a helper's source (C extensions, dynamic
-dispatch), `# LUCEN TRUST` above its `def` asserts it is parallel-safe;
-`trust=callables` does the same per block and `[trust] callables` project-wide.
-`depend=none` asserts your indexed writes are disjoint, and the runtime audit
-still catches you if they are not; it takes `skip_runtime_check=true` on top of
-that, two deliberate assertions, to reach a wrong result.
-
-Experimental features are off by default and enabled per process:
-
-```python
-lucen.activate(experimental=["early_exit", "typed_buffers"])
-```
-
-| Flag | Effect |
-|---|---|
-| `early_exit` | Parallelize loops containing `break` with exact first-match semantics |
-| `typed_buffers` | Dense array-output maps ship typed result slabs on PROCESS |
-| `branch_sensitive_deps` | Per-branch dependency classification under the runtime audit |
+Nine more cover CPU affinity, nested blocks, wavefront grain size, reduction
+order, progress, fallback surfacing, and the expert assertions that waive a
+proof (`depend`, `skip_runtime_check`, `trust`, and `# LUCEN TRUST` on a
+helper's `def`). [docs/pragmas.md](docs/pragmas.md) is the full reference: every
+accepted form, the `lucen.toml` schema for project-wide defaults and ceilings,
+and the opt-in experimental features.
 
 ## How it works
 
@@ -215,27 +189,24 @@ scanner -> rewriter -> selector -> codegen -> dispatch
 (pragmas)  (classify)  (route)     (twins)    (execute + audit + commit)
 ```
 
-The rewriter classifies every name in the block (loop-local, read-only,
-reduction accumulator, indexed write, cross-iteration read) and recognizes
-dependency shapes analytically, including `results[i // 2]`-style DAGs. Codegen
-emits a chunk function for workers and a sequential twin that is also the
-fallback path, so the sequential behavior is the original loop by construction.
-Dispatch runs chunks over persistent pools, audits write disjointness at join,
-folds reductions in exact element order, and commits in chunk order.
+Codegen emits two functions per block: a chunk function for workers, and a
+sequential twin that is also the fallback path, so the sequential behavior is
+the original loop by construction. Dispatch runs chunks over persistent pools,
+audits write disjointness at join, folds reductions in exact element order, and
+commits in chunk order. The loop bodies stay your Python; compiling eligible
+bodies to native kernels is [ROADMAP](ROADMAP.md) L1.
 
-The loop bodies themselves are always your Python; compiling eligible bodies to
-native kernels is [ROADMAP](ROADMAP.md) L1, not a current feature. The two
-concurrency protocols behind the audit and the wavefront are model-checked.
-[docs/architecture.md](docs/architecture.md) has the stage-by-stage diagrams
-and the backend-selection rules; the
-[technical specification](docs/spec/lucen_technical_spec.md) is the authority
-on every semantic.
+[docs/architecture.md](docs/architecture.md) has the stage diagrams, the
+dependency shapes the analyzer recognizes, and the backend-selection rules. The
+[technical specification](docs/spec/lucen_technical_spec.md) is the authority on
+every semantic, and the audit and wavefront protocols are
+[model-checked](docs/formal/).
 
 ## Performance
 
 Medians of 5 after warm-up on a 12-core i5-12450HX, across seven interpreters.
-"Native Python" is the identical file with the pragmas treated as what they
-are, comments; "Lucen" is the shipped product with its gate deciding.
+"Native Python" is the identical file with the pragmas as comments; "Lucen" is
+the shipped product with its gate deciding.
 
 ![Lucen speedup by workload, CPython 3.11 on 12 cores](assets/benchmark.svg)
 
@@ -286,39 +257,39 @@ and what two red-team campaigns (130+ adversarial scenarios) found there, is in
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [Architecture](docs/architecture.md) | The pipeline and dispatch flow, with diagrams |
-| [Pragma and clause reference](docs/pragmas.md) | Every pragma and clause, with accepted forms |
-| [Glossary](docs/glossary.md) | The domain terms in one place |
-| [Technical specification](docs/spec/lucen_technical_spec.md) | Every semantic and invariant |
-| [Engineering guide](docs/implementation/lucen_engineering_doc.md) | How the code is organized |
-| [Formal specifications](docs/formal/) | TLA+ and executable checks of the concurrency invariants |
-| [Paper](docs/paper/lucen.md) | The design and evaluation, in preprint form |
-| [BENCHMARK.md](BENCHMARK.md) | Cross-version measurements and the correctness matrix |
-| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
-| [LIMITATIONS.md](LIMITATIONS.md) | Known gaps and the trust contract |
-| [ROADMAP.md](ROADMAP.md) | What is planned, in what order |
-| [STABILITY.md](STABILITY.md) | What is stable and what may change |
-| [SUPPORT.md](SUPPORT.md) | Where to take a question, a bug, or a security report |
-| [examples/](examples/) | Runnable examples, including the spec's worked DAG |
+Everything is on the [documentation site](https://fcmv.github.io/lucen/): the
+[pragma and clause reference](https://fcmv.github.io/lucen/pragmas/), the
+[architecture](https://fcmv.github.io/lucen/architecture/), the
+[technical specification](https://fcmv.github.io/lucen/spec/lucen_technical_spec/)
+that is the authority on every semantic, the
+[API reference](https://fcmv.github.io/lucen/api/), the
+[glossary](https://fcmv.github.io/lucen/glossary/), the
+[paper](https://fcmv.github.io/lucen/paper/lucen/), the architecture decision
+records, and the TLA+ models. [examples/](examples/) is runnable, including the
+specification's own worked DAG.
+
+[STABILITY.md](STABILITY.md) states what is covered by semantic versioning: the
+pragma grammar, the clause vocabulary, the `lucen.toml` schema, the public API
+and the CLI contract are stable; routing decisions, generated code and report
+wording are not.
 
 ## Getting help
 
-Ask usage questions in GitHub Discussions, and file reproducible bugs as GitHub
-issues. Before either, `lucen explain` and `lucen profile` answer most "why did
-this block not parallelize" questions on their own. [SUPPORT.md](SUPPORT.md)
-maps each kind of report to its channel and says what a useful bug report
-contains. Security issues go to [SECURITY.md](SECURITY.md), not public issues.
+Ask usage questions in GitHub Discussions and file reproducible bugs as GitHub
+issues; [SUPPORT.md](SUPPORT.md) has the details. Before either, `lucen explain`
+and `lucen profile` answer most "why did this block not parallelize" questions
+on their own. Security issues go to [SECURITY.md](SECURITY.md), not public
+issues.
 
 ## Contributing
 
 Start with `pip install -e ".[dev]" && pytest`. Changes to the execution
 pipeline are judged by the invariant suite, and no routing change lands without
-benchmark evidence. See [CONTRIBUTING.md](CONTRIBUTING.md) for the process,
-[AI_USAGE_GUIDELINE_FOR_PR.md](AI_USAGE_GUIDELINE_FOR_PR.md) for AI-assisted
-contributions, [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made, and
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), which governs all project spaces.
+benchmark evidence: [CONTRIBUTING.md](CONTRIBUTING.md) has the bar and the
+process, and [AI_USAGE_GUIDELINE_FOR_PR.md](AI_USAGE_GUIDELINE_FOR_PR.md) the
+policy on AI-assisted contributions. Decisions are made as described in
+[GOVERNANCE.md](GOVERNANCE.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+governs all project spaces.
 
 ## License
 

@@ -1,11 +1,9 @@
 # Security Policy
 
-Lucen rewrites and parallelizes code that its users trust to produce
-correct results. That places it in an unusual security position for a
-library: its most serious failure is not a crash or a leak, it is a *silent
-incorrect result*, a program that runs to completion and returns the wrong
-answer without any indication that anything went wrong. This policy is written
-around that reality.
+Lucen's most serious failure is not a crash or a leak, it is a *silent
+incorrect result*: a program that runs to completion and returns the wrong
+answer with no indication anything went wrong. This policy is written around
+that.
 
 ## Supported versions
 
@@ -30,10 +28,8 @@ crash-and-leak taxonomy. In descending order of severity:
 
 A marked block that produces a result different from its sequential execution,
 without a fallback report, without an exception, and without the user having
-made one of the documented trust waivers. This is the highest-severity class
-of issue in Lucen. It is a direct violation of the core guarantee, and it
-is treated with more urgency than a crash, because a crash is visible and a
-wrong answer is not.
+made one of the documented trust waivers. This is treated with more urgency
+than a crash, because a crash is visible and a wrong answer is not.
 
 The documented trust boundary is the explicit exception (see
 [LIMITATIONS.md](LIMITATIONS.md), section 1): a divergence that requires a
@@ -45,12 +41,10 @@ ordinary correct-looking code, is a critical security issue.
 
 ### High: a crash or hang caused by Lucen on code that runs fine without it
 
-A marked file that Lucen causes to raise, deadlock, or exhaust resources
-where the same file with the pragmas treated as comments runs cleanly. This
-violates the never-disruptive guarantee. The intended behavior for anything
-Lucen cannot handle is a quiet sequential fallback, so a crash or hang
-attributable to Lucen is a defect of the same family, one severity below a
-silent wrong result because it is at least visible.
+A marked file that Lucen causes to raise, deadlock, or exhaust resources where
+the same file with the pragmas as comments runs cleanly. The intended behavior
+for anything Lucen cannot handle is a quiet sequential fallback, so this is the
+same family of defect, one severity down because it is visible.
 
 ### Moderate: unexpected code execution surface
 

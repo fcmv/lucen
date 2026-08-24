@@ -119,6 +119,24 @@ pragma clause, clamped by `[limits]`. Degenerate values are rejected when the
 file loads, with the same strictness a pragma clause gets. See the
 [technical specification](spec/lucen_technical_spec.md) for the full schema.
 
+## Experimental features
+
+Three schedulers are off by default and enabled per process, not per block:
+
+```python
+lucen.activate(experimental=["early_exit", "typed_buffers"])
+```
+
+| Flag | Effect |
+|---|---|
+| `early_exit` | Parallelizes loops containing `break`, reproducing sequential first-match semantics speculatively. |
+| `typed_buffers` | Dense array-output maps ship typed result slabs on the process backend instead of Python lists, roughly an order of magnitude cheaper to transfer. |
+| `branch_sensitive_deps` | Per-branch dependency classification, more permissive than the default branch merge, under the runtime write-set audit. |
+
+None of them changes the computed result. A `[limits] allow_experimental = false`
+in `lucen.toml` vetoes all three for the project, which fleet operators can set
+to keep them out of a deployment.
+
 ## Removed clauses
 
 Two earlier clauses were removed and now fail loud with a pointer to the
