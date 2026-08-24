@@ -1,10 +1,9 @@
 # Limitations
 
-What Lucen does not do, where it leaves performance on the table, and the exact
-boundary of its correctness guarantee. Everything here is about speed, scope, or
-observable semantics that differ without being wrong; none of it is a case where
-Lucen silently returns a wrong answer inside its own contract. If you hit
-something that behaves worse than this document promises, that is a bug.
+What Lucen does not do, where it leaves performance on the table, and the
+boundary of its correctness guarantee. Nothing here is a case where Lucen
+silently returns a wrong answer inside its own contract. If you hit something
+that behaves worse than this document promises, that is a bug.
 
 Planned work against these items is in [ROADMAP.md](ROADMAP.md), the measured
 numbers are in [BENCHMARK.md](BENCHMARK.md), and the full semantics are in the

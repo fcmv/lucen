@@ -83,8 +83,8 @@ pure Python there. The core ships as one `abi3` wheel; free-threaded CPython has
 no stable ABI, so that binary cannot load. Requires all of:
 
 1. A separate non-`abi3` `cp3xt`-tagged wheel per free-threaded version. The
-   PyO3 binding is already free-threaded-capable; the `abi3` wheel simply cannot
-   be the vehicle there.
+   PyO3 binding is already free-threaded-capable; the `abi3` wheel cannot be
+   the vehicle there.
 2. An explicit GIL-free module declaration. Without it CPython silently
    re-enables the GIL process-wide on import, destroying the property a user
    chose a free-threaded interpreter for. This is why the pure-Python fallback,

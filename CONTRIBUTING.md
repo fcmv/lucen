@@ -48,18 +48,17 @@ Every change is measured against three properties, in this order.
 
 A change touching the execution pipeline must keep every workload bit-identical
 across the sequential, thread, and process backends, and identical to the same
-file run with Lucen not activated. This is not a code-review opinion; it is
-an executable suite. Run it both ways:
+file run with Lucen not activated. The suite that checks this is executable, so
+run it both ways:
 
 ```bash
 pytest                                  # native path (if the core is built)
 LUCEN_DISABLE_NATIVE=1 pytest        # pure-Python fallback path
 ```
 
-The fallback run matters as much as the native run. Every native operation has
-a pure-Python twin that must return exactly the same value, and CI runs the
-suite under `LUCEN_DISABLE_NATIVE=1` for exactly this reason. A change that
-passes on one path and not the other is not done.
+Every native operation has a pure-Python twin that must return exactly the same
+value, and CI runs the suite under `LUCEN_DISABLE_NATIVE=1` for that reason. A
+change that passes on one path and not the other is not done.
 
 Set `LUCEN_DISABLE_CACHE=1` when you compare rewritten output by hand. The
 rewrite cache is keyed partly on `__version__`, which does not move while you
@@ -77,9 +76,8 @@ python tests/benchmarks/routing_check.py
 
 which times every workload on every backend and asserts the gate picks the
 fastest, and that every backend is bit-identical to plain Python. A routing
-change that does not keep both properties is a regression, regardless of how
-good the idea is. Improving a number is welcome; regressing one needs a stated,
-accepted reason.
+change that does not keep both properties is a regression. Improving a number is
+welcome; regressing one needs a stated, accepted reason.
 
 ### 3. Additions to the native core must be measured
 

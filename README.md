@@ -48,8 +48,7 @@ file is the program you started with: the
    reason recorded in `lucen.get_fallback_report()`. Exceptions keep their type,
    their message and the exact sequential-prefix state of your containers.
 3. **Never silently pointless.** A static pre-screen and a runtime probe refuse
-   to parallelize loops that would lose to dispatch overhead, and report that
-   decision too.
+   to parallelize loops that would lose to dispatch overhead, and say so.
 
 These hold across a matrix of 7 interpreters x 8 workloads x 4 execution
 pathways, every cell checked bit-identical against plain Python
@@ -62,9 +61,9 @@ pathways, every cell checked bit-identical against plain Python
 pip install lucen
 ```
 
-Python 3.9 or later, with no third-party runtime dependencies on 3.11 and
-later; 3.9 and 3.10 need `tomli` to read `lucen.toml`. On GIL builds pip
-installs a native Rust core (abi3, one binary per platform) that runs the
+Requires Python 3.9 or later. There are no third-party runtime dependencies on
+3.11 and later; 3.9 and 3.10 need `tomli` to read `lucen.toml`. On GIL builds
+pip installs a native Rust core (abi3, one binary per platform) that runs the
 write-set audit and the reduction folds. On free-threaded builds, where the
 abi3 core cannot load, pip installs the pure-Python wheel instead, which passes
 the same test suite.
@@ -82,15 +81,17 @@ pytest
 
 | Interpreter | Status | Native core |
 |---|---|---|
-| CPython 3.9 to 3.14 (GIL) | Supported, tested per release | yes |
-| CPython 3.13t / 3.14t (free-threaded) | Supported, tested | pure-Python fallback |
-| PyPy 3.11 | Supported, tested on the fallback | pure-Python fallback |
-| GraalPy | Best-effort, tested on the fallback | pure-Python fallback |
+| CPython 3.9 to 3.14, GIL | Gated in CI on Linux, macOS and Windows | yes |
+| CPython 3.14t, free-threaded | Gated in CI | pure-Python fallback |
+| PyPy 3.11 | Gated in CI | pure-Python fallback |
+| GraalPy 24.1 | Best effort, not gated | pure-Python fallback |
+
+3.13t takes the same pure-Python path as 3.14t and is not gated separately.
 
 ## Usage
 
-For a script you launch directly, use `lucen run`. It rewrites the marked
-loops in the file you point at, then executes it:
+For a script you launch directly, use `lucen run`. It rewrites the marked loops
+in that file, then executes it:
 
 ```bash
 lucen run work.py
@@ -175,10 +176,11 @@ malformed clause is a loud import-time error with a did-you-mean suggestion.
 | `on_error=` | Gather per-iteration exceptions instead of failing fast (`collect`) |
 | `strict=` | Turn this block's fallbacks into hard errors |
 
-Nine more cover CPU affinity, nested blocks, wavefront grain size, reduction
-order, progress, fallback surfacing, and the expert assertions that waive a
-proof (`depend`, `skip_runtime_check`, `trust`, and `# LUCEN TRUST` on a
-helper's `def`). [docs/pragmas.md](docs/pragmas.md) is the full reference: every
+Nine more clauses cover CPU affinity, nested blocks, wavefront grain size,
+reduction order, progress, fallback surfacing, and the expert assertions that
+waive a proof (`depend`, `skip_runtime_check`, `trust`). A third pragma,
+`# LUCEN TRUST` above a helper's `def`, asserts that helper is safe under
+parallelism. [docs/pragmas.md](docs/pragmas.md) is the full reference: every
 accepted form, the `lucen.toml` schema for project-wide defaults and ceilings,
 and the opt-in experimental features.
 
@@ -231,8 +233,8 @@ AI-generated to an expert standard, and its parallel float reductions produce
 different bits than sequential Python on every interpreter tested. Lucen's
 reductions are bit-identical everywhere.
 
-Every number, pathway and interpreter, the correctness matrix, and the raw
-JSON: [BENCHMARK.md](BENCHMARK.md).
+The full timing matrix, the correctness matrix, and the raw JSON:
+[BENCHMARK.md](BENCHMARK.md).
 
 ## Limitations
 
@@ -250,9 +252,8 @@ JSON: [BENCHMARK.md](BENCHMARK.md).
 - **One loop or comprehension per pragma pair**, no `async` bodies, and
   generator expressions are never parallelized.
 
-The full inventory, including the exact boundary of the correctness guarantee
-and what two red-team campaigns (130+ adversarial scenarios) found there, is in
-[LIMITATIONS.md](LIMITATIONS.md). Planned work against each item is in
+The full inventory, and the red-team findings behind the trust boundary, is
+[LIMITATIONS.md](LIMITATIONS.md). Planned work against each item is
 [ROADMAP.md](ROADMAP.md).
 
 ## Documentation

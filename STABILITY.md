@@ -1,20 +1,16 @@
 # Stability and Compatibility Policy
 
-Lucen is more than a library API: it defines a small language surface (the
-pragma grammar, the clause vocabulary, the `lucen.toml` schema) that user
-code and projects depend on. This document states what is stable, what is not,
-and how changes are made, so that upgrading Lucen is predictable.
-
-Lucen follows [Semantic Versioning](https://semver.org/). A release is
-`MAJOR.MINOR.PATCH`. The sections below define what a change to each part of the
-surface means in those terms.
+Alongside a Python API, Lucen defines a small language surface that user code
+depends on: the pragma grammar, the clause vocabulary, and the `lucen.toml`
+schema. Lucen follows [Semantic Versioning](https://semver.org/), and the
+sections below say what a change to each part of that surface means in
+`MAJOR.MINOR.PATCH` terms.
 
 ## The one guarantee that never changes
 
 Independent of any version, a parallel run is bit-identical to the same file
-executed as plain sequential Python. This is not a versioned feature; it is the
-definition of the project. No release, major or otherwise, will relax it. A
-release that changed it would not be a new version of Lucen.
+executed as plain sequential Python. No release, major or otherwise, relaxes
+it.
 
 ## Stable surface (changes are breaking, so MAJOR)
 

@@ -13,9 +13,9 @@ ran.
   the reports, and the clause surface. Start there.
 - **[LIMITATIONS.md](LIMITATIONS.md)** is the inventory of what Lucen does not
   do and where its guarantee's boundary lies. If a block is refused or behaves
-  unexpectedly, the answer is very often here.
+  unexpectedly, the answer is usually here.
 - **[BENCHMARK.md](BENCHMARK.md)** has measured performance across
-  interpreters, to calibrate expectations against real numbers.
+  interpreters, for calibrating expectations.
 - The **[technical specification](docs/spec/lucen_technical_spec.md)** is the
   authority on every semantic, and the
   **[engineering guide](docs/implementation/lucen_engineering_doc.md)** maps
