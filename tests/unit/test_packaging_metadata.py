@@ -45,11 +45,38 @@ def _requirement_names(requirements: Iterable[str]) -> Set[str]:
     return names
 
 
+# An import guarded by try/except ImportError is satisfied by whichever half
+# the interpreter provides, so neither half is a hard requirement - the backport
+# has its own check above. Judging them here would mean trusting
+# sys.stdlib_module_names, which GraalPy ships incomplete: it omits tomllib on a
+# 3.11 interpreter that imports tomllib fine.
+def _guarded_imports(tree: ast.Module) -> Set[int]:
+    guarded: Set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        caught: Set[str] = set()
+        for handler in node.handlers:
+            raised = handler.type
+            parts = raised.elts if isinstance(raised, ast.Tuple) else [raised]
+            caught.update(p.id for p in parts if isinstance(p, ast.Name))
+        if not caught & {"ImportError", "ModuleNotFoundError"}:
+            continue
+        for stmt in [*node.body, *(s for h in node.handlers for s in h.body)]:
+            for inner in ast.walk(stmt):
+                if isinstance(inner, (ast.Import, ast.ImportFrom)):
+                    guarded.add(id(inner))
+    return guarded
+
+
 def _third_party_imports() -> Dict[str, Set[str]]:
     imports: Dict[str, Set[str]] = {}
     for source in sorted((_REPO_ROOT / "lucen").rglob("*.py")):
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        guarded = _guarded_imports(tree)
         for node in ast.walk(tree):
+            if id(node) in guarded:
+                continue
             if isinstance(node, ast.Import):
                 modules = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
@@ -88,11 +115,12 @@ def test_tomli_backport_is_declared_for_pythons_without_tomllib():
         assert "python_version < '3.11'" in tomli[0], f"{path} declares {tomli[0]!r}"
 
 
-# Below 3.11 sys.stdlib_module_names does not know about tomllib, so the
-# stdlib half of the fallback in config.py reads as an undeclared dependency.
-# An interpreter can only judge imports against the stdlib it ships.
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="stdlib set predates tomllib")
-def test_every_third_party_import_is_a_declared_dependency():
+# Gated on the API existing, not on a version: what the set *contains* varies by
+# interpreter and cannot be inferred from sys.version_info.
+@pytest.mark.skipif(
+    not hasattr(sys, "stdlib_module_names"), reason="sys.stdlib_module_names is 3.10+"
+)
+def test_every_unguarded_third_party_import_is_a_declared_dependency():
     declared = _requirement_names(_project(_NATIVE).get("dependencies", []))
     for module, sources in sorted(_third_party_imports().items()):
         assert module.lower().replace("_", "-") in declared, (
