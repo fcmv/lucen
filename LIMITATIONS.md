@@ -210,10 +210,12 @@ affect output.
 ### 3.1 `typed_buffers` is not in the cost model
 
 The experimental `typed_buffers` flag ships typed result slabs (array or
-bytearray) back from process workers, roughly an order of magnitude cheaper than
-a list of the same floats. The profitability gate does not yet account for that
-cheaper transfer, so it routes array-output maps to sequential even where the
-typed process path would win.
+bytearray) back from process workers instead of a list of the same floats,
+which makes the forced-process buffer map 2.5x to 3.2x faster and brings it
+from 2.7x to 4.4x behind hand-written code to parity with it
+([BENCHMARK.md](BENCHMARK.md)). The profitability gate does not yet account for
+that cheaper transfer, so it routes array-output maps to sequential even where
+the typed process path would win.
 
 For a dense array-output map, enable the flag and force the backend:
 `activate(experimental=["typed_buffers"])` plus `# LUCEN START backend=process`.

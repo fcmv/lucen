@@ -83,10 +83,11 @@ welcome; regressing one needs a stated, accepted reason.
 
 The native core holds only operations that are measured faster than their
 Python twin on representative data and that pass the parity tests proving they
-return exactly what the twin returns. Two operations were built, measured
-slower, and deliberately kept in Python, with the measurement recorded in the
-code so nobody re-attempts them blind. If you add to the core, bring the
-benchmark that justifies it and the parity test that constrains it.
+return exactly what the twin returns. The element-wise slab commit was built,
+measured slower than CPython's specialized list stores, and kept in Python,
+with the measurement recorded at `lucen/execution/runtime.py` so nobody
+re-attempts it blind. If you add to the core, bring the benchmark that
+justifies it and the parity test that constrains it.
 
 ## Two review checkpoints
 

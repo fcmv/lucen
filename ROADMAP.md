@@ -32,10 +32,10 @@ Closes [LIMITATIONS 3.1](LIMITATIONS.md#31-typed_buffers-is-not-in-the-cost-mode
 
 Give the profitability gate a typed-transfer cost term so it selects the typed
 process path automatically whenever that path is fastest. The `typed_buffers`
-flag ships typed result slabs back from process workers, roughly an order of
-magnitude cheaper than a list of the same floats, but the gate does not model
-that, so a dense array-output map routes sequential and reaching the win today
-needs an explicit `backend=process` plus the flag.
+flag ships typed result slabs back from process workers, worth 2.5x to 3.2x on
+the forced-process buffer map ([BENCHMARK.md](BENCHMARK.md)), but the gate does
+not model that, so a dense array-output map routes sequential and reaching the
+win today needs an explicit `backend=process` plus the flag.
 
 **Done when** the flag becomes a default the gate reaches for on its own, with
 `routing_check.py` still green.

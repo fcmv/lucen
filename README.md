@@ -31,10 +31,12 @@ for i in range(len(records)):
 lucen run work.py
 ```
 
-Over 100,000 records that loop goes from 5.7 s to 2.3 s on twelve cores, with
-a bit-identical checksum ([examples/scored_records.py](examples/scored_records.py),
-median of 3). The pragmas are ordinary comments, so with Lucen uninstalled the
-file is the program you started with: the
+Over 100,000 records that loop drops from 5.7 s to 2.3 s of wall clock on
+twelve cores, process-pool startup included, with a bit-identical checksum
+([examples/scored_records.py](examples/scored_records.py), median of 3).
+Steady-state, [BENCHMARK.md](BENCHMARK.md) puts this shape at 3.2x to 3.8x
+across seven interpreters. The pragmas are ordinary comments, so with Lucen
+uninstalled the file is the program you started with: the
 [Comment Invariant](docs/glossary.md).
 
 ## Guarantees
