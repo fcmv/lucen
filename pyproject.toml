@@ -15,6 +15,9 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Lucen contributors" }]
+# tomllib is stdlib only from 3.11, and this wheel installs down to 3.9; keep
+# in step with packaging/pure/pyproject.toml.
+dependencies = ["tomli; python_version < '3.11'"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
