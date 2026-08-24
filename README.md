@@ -128,16 +128,15 @@ Block 1 (line 14)
   Backend: PROCESS, flat chunk scheduler
   Reason: all shared writes are provably or assertedly disjoint per iteration
   Clauses in effect: calibrate=false
-  Runtime-dependent (never reported statically): argument picklability,
-  custom-callable well-formedness, pool availability - see `lucen profile`.
+  Runtime-dependent (never reported statically): argument picklability, custom-callable well-formedness, pool availability - see `lucen profile`.
 ```
 
-A block it refuses names the reason:
+A block it refuses names the dependency that stopped it:
 
 ```
-Block 1 (line 12)
-  - Sequential
-  Reason: cross-iteration dependency 'scores[i - 1]' (monotonic chain)
+Block 1 (line 9)
+  x Sequential
+  Reason: 'scores' depends on 'scores[i - 1]': a genuine one-directional chain; no parallel execution exists for this shape in v1 (spec 5.5.2)
 ```
 
 `lucen profile script.py --per-block` reports what actually ran, with timings.
@@ -145,8 +144,7 @@ A runtime downgrade prints one line on stderr and is retained as a structured
 record:
 
 ```
-lucen fallback: PARALLEL_UNPROFITABLE (work.py:4): measured ~44 ns/iteration
-loses to dispatch overhead; ran SEQUENTIAL (calibrate=false overrides, spec 5.17)
+lucen fallback: PARALLEL_UNPROFITABLE (examples/demo_workload.py:20): measured ~39 ns/iteration loses to dispatch overhead; ran SEQUENTIAL (calibrate=false overrides, spec 5.17)
 ```
 
 ```python
@@ -223,10 +221,12 @@ the shipped product with its gate deciding.
 | buffer map (1M, array) | 75.9 to 106.3 | 52.8 to 67.1 | 26.6 |
 | nested heavy (4k) | 61.6 to 79.0 | 16.6 to 27.4 | 13.7 |
 
-Where parallelism pays, Lucen runs 3x to 4.3x faster than its own sequential
-execution and lands within a few percent of hand-tuned `concurrent.futures`
-code. Where it cannot pay, the gate stays sequential at effectively zero
-overhead.
+Where parallelism pays, Lucen runs 2.5x to 4.3x faster than its own sequential
+execution. Against hand-tuned `concurrent.futures` code it is 18 percent slower
+at the median, and between 5 and 67 percent slower across the 28 measured
+cells. Where parallelism cannot pay, the gate stays sequential at parity; light
+reductions are the one exception, and carry a probe overhead of 4 to 14
+percent.
 
 One caveat on the last column: the hand-written comparison code was
 AI-generated to an expert standard, and its parallel float reductions produce
@@ -243,7 +243,7 @@ The full timing matrix, the correctness matrix, and the raw JSON:
   can diverge per worker.
 - **`typed_buffers` is not in the cost model.** Array-output maps route
   sequential unless you force `backend=process` with the flag on.
-- **Light reductions carry a 5 to 10 percent probe overhead**, because
+- **Light reductions carry a 4 to 14 percent probe overhead**, because
   reductions cannot use the twin-probe fast path yet.
 - **The recognized-DAG wavefront runs sequentially by default.** Its parallel
   form pays off only on free-threaded builds under `backend=thread`.

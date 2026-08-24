@@ -221,8 +221,9 @@ Teaching the cost model the typed transfer cost is [ROADMAP](ROADMAP.md) N1.
 
 ### 3.2 Light reductions carry a small probe overhead
 
-A trivial reduction over a large input carries roughly five to ten percent probe
-overhead relative to sequential, because reductions cannot yet use the
+A trivial reduction over a large input carries a 4 to 14 percent probe overhead
+relative to sequential, measured across the seven benchmark interpreters
+([BENCHMARK.md](BENCHMARK.md)), because reductions cannot yet use the
 twin-probe fast path that pure maps use: a reduction's sequential twin is
 functional rather than in-place, so probing it still needs a chunk-function
 slab. Nothing is required of you; if a specific light reduction is hot,
